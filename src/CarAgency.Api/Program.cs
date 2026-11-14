@@ -275,6 +275,25 @@ app.MapPatch("/api/admin/used-submissions/{id:guid}/status",async (Guid id,Submi
 }).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
 var api=app.MapGroup("/api").RequireAuthorization("StaffOrAdmin");
 api.MapGet("/dashboard",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);var all=user.IsInRole("SuperAdmin");return Results.Ok(new{vehicles=await db.Vehicles.CountAsync(x=>all||x.AgencyId==a),available=await db.Vehicles.CountAsync(x=>(all||x.AgencyId==a)&&x.Status=="Available"),customers=await db.Customers.CountAsync(x=>all||x.AgencyId==a),sales=await db.Sales.CountAsync(x=>all||x.AgencyId==a)});});
+api.MapGet("/vehicles/{id:guid}/photos",async (Guid id,ClaimsPrincipal user,CarDb db)=>{
+ var agency=Guid.Parse(user.FindFirst("agency_id")!.Value);
+ if(!await db.Vehicles.AnyAsync(v=>v.Id==id&&(user.IsInRole("SuperAdmin")||v.AgencyId==agency)))return Results.NotFound();
+ var ids=new List<Guid>();
+ await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
+ await using var cmd=conn.CreateCommand();cmd.CommandText="""SELECT "Id" FROM "VehiclePhotos" WHERE "VehicleId"=@vehicle ORDER BY "SortOrder" LIMIT 8""";
+ var p=cmd.CreateParameter();p.ParameterName="vehicle";p.Value=id;cmd.Parameters.Add(p);
+ await using var reader=await cmd.ExecuteReaderAsync();while(await reader.ReadAsync())ids.Add(reader.GetGuid(0));
+ return Results.Ok(ids);
+}).RequireAuthorization("AdminOnly");
+api.MapGet("/vehicles/{id:guid}/photos/{photoId:guid}",async (Guid id,Guid photoId,ClaimsPrincipal user,CarDb db)=>{
+ var agency=Guid.Parse(user.FindFirst("agency_id")!.Value);
+ if(!await db.Vehicles.AnyAsync(v=>v.Id==id&&(user.IsInRole("SuperAdmin")||v.AgencyId==agency)))return Results.NotFound();
+ await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
+ await using var cmd=conn.CreateCommand();cmd.CommandText="""SELECT "MimeType","ImageData" FROM "VehiclePhotos" WHERE "Id"=@photo AND "VehicleId"=@vehicle""";
+ foreach(var (key,value) in new[]{("photo",photoId),("vehicle",id)}){var p=cmd.CreateParameter();p.ParameterName=key;p.Value=value;cmd.Parameters.Add(p);}
+ await using var reader=await cmd.ExecuteReaderAsync();
+ return await reader.ReadAsync()?Results.File((byte[])reader.GetValue(1),reader.GetString(0)):Results.NotFound();
+}).RequireAuthorization("AdminOnly");
 api.MapGet("/vehicles",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);var isSuper=user.IsInRole("SuperAdmin");return await db.Vehicles.Where(x=>isSuper||x.AgencyId==a).OrderBy(x=>x.Make).ToListAsync();});
 api.MapPatch("/vehicles/{id:guid}/publication",async (Guid id,PublicationDto dto,ClaimsPrincipal user,CarDb db)=>{
  var agency=Guid.Parse(user.FindFirst("agency_id")!.Value);
