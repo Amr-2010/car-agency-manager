@@ -37,6 +37,23 @@ builder.Services.AddDbContext<CarDb>(o=>o.UseNpgsql(cs));
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o=>o.TokenValidationParameters=new(){ValidateIssuer=true,ValidateAudience=true,ValidateIssuerSigningKey=true,ValidateLifetime=true,ValidIssuer="CarAgency",ValidAudience="CarAgencyClients",IssuerSigningKey=new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key))});
 builder.Services.AddAuthorization(o=>{o.AddPolicy("AdminOnly",p=>p.RequireRole("AgencyAdmin","SuperAdmin"));o.AddPolicy("StaffOrAdmin",p=>p.RequireRole("Staff","AgencyAdmin","SuperAdmin"));});builder.Services.AddScoped<PasswordHasher<AppUser>>();
 var app=builder.Build();
+// Initialize the schema for a fresh dedicated Car Agency database.
+// EnsureCreated does not migrate existing schemas; replace with EF migrations before upgrades.
+using (var scope = app.Services.CreateScope())
+{
+    var database = scope.ServiceProvider.GetRequiredService<CarDb>();
+    try
+    {
+        await database.Database.EnsureCreatedAsync();
+        app.Logger.LogInformation("Car Agency database schema verified.");
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Car Agency database schema initialization failed.");
+        // Keep health endpoints available for diagnosis; data endpoints may fail until fixed.
+    }
+}
+
 // TLS is terminated by Render proxy; do not redirect internal HTTP health probes.
 app.UseAuthentication();app.UseAuthorization();
 app.UseDefaultFiles();
