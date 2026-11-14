@@ -7,13 +7,20 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.AspNetCore.Identity;
 var builder=WebApplication.CreateBuilder(args);
-var cs=builder.Configuration.GetConnectionString("Database") ?? Environment.GetEnvironmentVariable("DATABASE_CONNECTION_STRING") ?? throw new InvalidOperationException("Database connection required");
-var key=builder.Configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("JWT_KEY") ?? throw new InvalidOperationException("JWT_KEY required");
-if(Encoding.UTF8.GetByteCount(key)<32) throw new InvalidOperationException("JWT_KEY must be >= 32 bytes");
+// Prefer Render environment values; empty appsettings entries must not shadow them.
+var cs = Environment.GetEnvironmentVariable("DATABASE_CONNECTION_STRING");
+if (string.IsNullOrWhiteSpace(cs)) cs = builder.Configuration.GetConnectionString("Database");
+var key = Environment.GetEnvironmentVariable("JWT_KEY");
+if (string.IsNullOrWhiteSpace(key)) key = builder.Configuration["Jwt:Key"];
+if (string.IsNullOrWhiteSpace(cs)) throw new InvalidOperationException("DATABASE_CONNECTION_STRING is missing. Set it in Render > Environment.");
+if (string.IsNullOrWhiteSpace(key)) throw new InvalidOperationException("JWT_KEY is missing. Set a random secret of at least 32 UTF-8 bytes in Render > Environment.");
+if (Encoding.UTF8.GetByteCount(key)<32) throw new InvalidOperationException("JWT_KEY must be at least 32 UTF-8 bytes");
 builder.Services.AddDbContext<CarDb>(o=>o.UseNpgsql(cs));
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o=>o.TokenValidationParameters=new(){ValidateIssuer=true,ValidateAudience=true,ValidateIssuerSigningKey=true,ValidateLifetime=true,ValidIssuer="CarAgency",ValidAudience="CarAgencyClients",IssuerSigningKey=new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key))});
 builder.Services.AddAuthorization(o=>{o.AddPolicy("AdminOnly",p=>p.RequireRole("AgencyAdmin","SuperAdmin"));o.AddPolicy("StaffOrAdmin",p=>p.RequireRole("Staff","AgencyAdmin","SuperAdmin"));});builder.Services.AddScoped<PasswordHasher<AppUser>>();
-var app=builder.Build();app.UseHttpsRedirection();app.UseAuthentication();app.UseAuthorization();
+var app=builder.Build();
+// TLS is terminated by Render proxy; do not redirect internal HTTP health probes.
+app.UseAuthentication();app.UseAuthorization();
 app.MapGet("/health",()=>Results.Ok(new {status="ok"}));
 // Public catalog: no credentials, no cost, VIN, customer or internal data.
 app.MapGet("/api/public/vehicles",async (CarDb db,string? make,int page=1,int pageSize=12)=>{
