@@ -1,0 +1,12 @@
+@page "/"
+@using System.Net.Http.Json
+@inject IHttpClientFactory Clients
+<h1>معارض السيارات</h1><p>تصفح السيارات المعتمدة والمنشورة فقط</p>
+@if (cars is null) { <p>جارٍ تحميل السيارات...</p> }
+else if (cars.Count == 0) { <p>لا توجد سيارات منشورة حاليًا.</p> }
+else { <section class="cards">@foreach (var car in cars) { <article><h3>@car.Make @car.Model</h3><p>موديل @car.Year</p><strong>@car.Price.ToString("N0")</strong></article> }</section> }
+@code {
+ List<CarItem>? cars;
+ protected override async Task OnInitializedAsync(){try{cars=await Clients.CreateClient("catalog").GetFromJsonAsync<List<CarItem>>("/api/public/vehicles");}catch{cars=new();}}
+ public record CarItem(Guid Id,string Make,string Model,int Year,decimal Price);
+}

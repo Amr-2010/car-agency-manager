@@ -1,0 +1,1 @@
+using Android.App;using Android.Content.PM;namespace CarAgency.Maui;[Activity(Theme="@android:style/Theme.Material.Light.NoActionBar",MainLauncher=true,ConfigurationChanges=ConfigChanges.ScreenSize|ConfigChanges.Orientation|ConfigChanges.UiMode)]public class MainActivity:Microsoft.Maui.MauiAppCompatActivity{}

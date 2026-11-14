@@ -1,0 +1,9 @@
+namespace CarAgency.Api;
+public class Agency { public Guid Id {get;set;}=Guid.NewGuid(); public string Name {get;set;}=""; public List<Branch> Branches {get;set;}=new(); }
+public class Branch { public Guid Id {get;set;}=Guid.NewGuid(); public Guid AgencyId {get;set;} public string Name {get;set;}=""; }
+public class Vehicle { public Guid Id {get;set;}=Guid.NewGuid(); public Guid AgencyId {get;set;} public Guid BranchId {get;set;} public string Vin {get;set;}=""; public string Make {get;set;}=""; public string Model {get;set;}=""; public int Year {get;set;} public decimal Cost {get;set;} public decimal Price {get;set;} public string Status {get;set;}="Available"; public bool IsPublished {get;set;}=false; public bool IsApproved {get;set;}=false; public string? ImageUrl {get;set;} ; }
+public class Customer { public Guid Id {get;set;}=Guid.NewGuid(); public Guid AgencyId {get;set;} public string FullName {get;set;}=""; public string Phone {get;set;}=""; }
+public class Sale { public Guid Id {get;set;}=Guid.NewGuid(); public Guid AgencyId {get;set;} public Guid VehicleId {get;set;} public Guid CustomerId {get;set;} public decimal Total {get;set;} public DateTime CreatedAt {get;set;}=DateTime.UtcNow; }
+public class Payment { public Guid Id {get;set;}=Guid.NewGuid(); public Guid AgencyId {get;set;} public Guid SaleId {get;set;} public decimal Amount {get;set;} public DateTime PaidAt {get;set;}=DateTime.UtcNow; }
+public class Expense { public Guid Id {get;set;}=Guid.NewGuid(); public Guid AgencyId {get;set;} public string Description {get;set;}=""; public decimal Amount {get;set;} public DateTime IncurredAt {get;set;}=DateTime.UtcNow; }
+public class AppUser { public Guid Id {get;set;}=Guid.NewGuid(); public Guid AgencyId {get;set;} public string Username {get;set;}=""; public string PasswordHash {get;set;}=""; public string Role {get;set;}="Staff"; }

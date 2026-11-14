@@ -1,0 +1,7 @@
+@page "/"
+<h1>لوحة إدارة المعارض</h1><p>منطقة خاصة بالمديرين فقط، محمية بتسجيل دخول على الخادم.</p>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px">
+@foreach(var item in modules){<article style="background:white;border:1px solid #dde5f1;padding:24px;border-radius:14px"><h3>@item</h3></article>}
+</div><p>عرض الأرقام الفعلية وعمليات الإدارة يحتاج ربط الواجهة بالـ API.</p>
+<form method="post" action="/logout"><button>تسجيل الخروج</button></form>
+@code {string[] modules=["السيارات والمخزون","المبيعات","العملاء","الحجوزات","الفروع","التقارير","المستخدمون والصلاحيات"];}

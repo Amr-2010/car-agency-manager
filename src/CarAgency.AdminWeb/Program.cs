@@ -1,0 +1,28 @@
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication;
+using System.Security.Claims;
+using System.Net.Http.Json;
+using System.IdentityModel.Tokens.Jwt;
+using CarAgency.AdminWeb.Components;
+var builder=WebApplication.CreateBuilder(args);
+builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(o=>{o.LoginPath="/login";o.Cookie.HttpOnly=true;o.Cookie.SecurePolicy=CookieSecurePolicy.Always;o.Cookie.SameSite=SameSiteMode.Lax;});
+builder.Services.AddAuthorization();
+builder.Services.AddHttpClient("api",c=>c.BaseAddress=new Uri(builder.Configuration["ApiBaseUrl"]??"http://localhost:5080"));
+var app=builder.Build();app.UseHttpsRedirection();app.UseStaticFiles();app.UseAuthentication();app.UseAuthorization();app.UseAntiforgery();
+app.MapGet("/login",()=>Results.Content("""<html lang="ar" dir="rtl"><meta charset="utf-8"><title>دخول الإدارة</title><body style="font:18px system-ui;max-width:420px;margin:8% auto"><h2>تسجيل دخول الإدارة</h2><form method="post" action="/login"><input name="username" placeholder="اسم المستخدم" required><p><input name="password" type="password" placeholder="كلمة المرور" required></p><button>دخول</button></form></body></html>""","text/html" )).AllowAnonymous();
+app.MapPost("/login",async (HttpContext ctx,IHttpClientFactory factory)=>{
+ var form=await ctx.Request.ReadFormAsync();
+ var response=await factory.CreateClient("api").PostAsJsonAsync("/api/auth/login",new {username=form["username"].ToString(),password=form["password"].ToString()});
+ if(!response.IsSuccessStatusCode)return Results.Unauthorized();
+ var login=await response.Content.ReadFromJsonAsync<LoginResponse>();if(login?.AccessToken is null)return Results.Unauthorized();
+ var jwt=new JwtSecurityTokenHandler().ReadJwtToken(login.AccessToken);
+ var role=jwt.Claims.FirstOrDefault(c=>c.Type==ClaimTypes.Role||c.Type=="role")?.Value;
+ if(role is not ("AgencyAdmin" or "SuperAdmin"))return Results.Forbid();
+ var identity=new ClaimsIdentity(jwt.Claims,CookieAuthenticationDefaults.AuthenticationScheme);
+ await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,new ClaimsPrincipal(identity),new AuthenticationProperties{IsPersistent=false,ExpiresUtc=DateTimeOffset.UtcNow.AddHours(1)});
+ return Results.Redirect("/");
+}).AllowAnonymous().DisableAntiforgery();
+app.MapPost("/logout",async (HttpContext ctx)=>{await ctx.SignOutAsync();return Results.Redirect("/login");}).RequireAuthorization().DisableAntiforgery();
+app.MapRazorComponents<App>().AddInteractiveServerRenderMode().RequireAuthorization();app.Run();
+record LoginResponse(string AccessToken,int ExpiresIn);
