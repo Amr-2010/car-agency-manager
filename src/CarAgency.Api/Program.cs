@@ -85,8 +85,8 @@ CREATE TABLE IF NOT EXISTS "UsedCarSubmissionPhotos" (
 using (var scope = app.Services.CreateScope())
 {
  var db=scope.ServiceProvider.GetRequiredService<CarDb>();
- var username=Environment.GetEnvironmentVariable("BOOTSTRAP_ADMIN_USERNAME");
- var password=Environment.GetEnvironmentVariable("BOOTSTRAP_ADMIN_PASSWORD");
+ var username=Environment.GetEnvironmentVariable("ADMIN_USER");
+ var password=Environment.GetEnvironmentVariable("ADMIN_PASSWORD");
  if(!string.IsNullOrWhiteSpace(username)&&!string.IsNullOrWhiteSpace(password)&&password.Length>=12&& !await db.Users.AnyAsync(x=>x.Role=="SuperAdmin"))
  {
   var agency=await db.Agencies.FirstOrDefaultAsync();
