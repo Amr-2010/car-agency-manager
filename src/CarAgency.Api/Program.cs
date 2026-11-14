@@ -48,6 +48,8 @@ using (var scope = app.Services.CreateScope())
     try
     {
         await database.Database.EnsureCreatedAsync();
+        await database.Database.ExecuteSqlRawAsync("""ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "CreatedAt" timestamptz NOT NULL DEFAULT now();""");
+        await database.Database.ExecuteSqlRawAsync("""ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "BodyType" varchar(40) NOT NULL DEFAULT 'Other';""");
         await database.Database.ExecuteSqlRawAsync("""
 CREATE TABLE IF NOT EXISTS "UsedCarSubmissions" (
  "Id" uuid PRIMARY KEY,
@@ -157,8 +159,8 @@ app.MapGet("/api/public/vehicles",async (CarDb db,string? make,int page=1,int pa
  page=Math.Max(1,page);pageSize=Math.Clamp(pageSize,1,48);
  var q=db.Vehicles.AsNoTracking().Where(v=>v.IsPublished&&v.IsApproved&&v.Status=="Available");
  if(!string.IsNullOrWhiteSpace(make))q=q.Where(v=>v.Make==make);
- return Results.Ok(await q.OrderByDescending(v=>v.Year).ThenBy(v=>v.Id).Skip((page-1)*pageSize).Take(pageSize)
- .Select(v=>new {v.Id,v.Make,v.Model,v.Year,v.Price,v.ImageUrl,v.BranchId,IsDemo=v.Vin.StartsWith("DEMO-CA-")}).ToListAsync());
+ return Results.Ok(await q.OrderByDescending(v=>v.CreatedAt).ThenByDescending(v=>v.Year).ThenBy(v=>v.Id).Skip((page-1)*pageSize).Take(pageSize)
+ .Select(v=>new {v.Id,v.Make,v.Model,v.Year,v.Price,v.ImageUrl,v.BranchId,v.BodyType,v.CreatedAt,IsDemo=v.Vin.StartsWith("DEMO-CA-")}).ToListAsync());
 });
 app.MapGet("/api/public/vehicles/{id:guid}",async (Guid id,CarDb db)=>{
  var v=await db.Vehicles.AsNoTracking().Where(v=>v.Id==id&&v.IsPublished&&v.IsApproved&&v.Status=="Available")
