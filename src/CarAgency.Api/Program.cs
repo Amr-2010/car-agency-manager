@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS "UsedCarSubmissions" (
  "Description" varchar(1000) NOT NULL,
  "Status" varchar(20) NOT NULL DEFAULT 'Pending',
  "CreatedAt" timestamptz NOT NULL DEFAULT now(),
- "BodyType" varchar(40) NOT NULL DEFAULT 'Other'
+ "BodyType" varchar(40) NOT NULL DEFAULT 'Other',
+ "Location" varchar(180) NOT NULL DEFAULT ''
 );
 """);
         await database.Database.ExecuteSqlRawAsync("""ALTER TABLE "UsedCarSubmissions" ADD COLUMN IF NOT EXISTS "BodyType" varchar(40) NOT NULL DEFAULT 'Other';""");
@@ -71,6 +72,7 @@ CREATE TABLE IF NOT EXISTS "UsedCarSubmissionPhotos" (
  "ImageData" bytea NOT NULL
 );
 """);
+        await database.Database.ExecuteSqlRawAsync("""ALTER TABLE "UsedCarSubmissions" ADD COLUMN IF NOT EXISTS "Location" varchar(180) NOT NULL DEFAULT '';""");
         app.Logger.LogInformation("Car Agency database schema verified.");
     }
     catch (Exception ex)
@@ -80,6 +82,21 @@ CREATE TABLE IF NOT EXISTS "UsedCarSubmissionPhotos" (
     }
 }
 
+using (var scope = app.Services.CreateScope())
+{
+ var db=scope.ServiceProvider.GetRequiredService<CarDb>();
+ var username=Environment.GetEnvironmentVariable("BOOTSTRAP_ADMIN_USERNAME");
+ var password=Environment.GetEnvironmentVariable("BOOTSTRAP_ADMIN_PASSWORD");
+ if(!string.IsNullOrWhiteSpace(username)&&!string.IsNullOrWhiteSpace(password)&&password.Length>=12&& !await db.Users.AnyAsync(x=>x.Role=="SuperAdmin"))
+ {
+  var agency=await db.Agencies.FirstOrDefaultAsync();
+  if(agency==null){agency=new Agency{Name="Car Agency Main"};db.Agencies.Add(agency);}
+  var admin=new AppUser{AgencyId=agency.Id,Username=username.Trim(),Role="SuperAdmin"};
+  admin.PasswordHash=scope.ServiceProvider.GetRequiredService<PasswordHasher<AppUser>>().HashPassword(admin,password);
+  db.Users.Add(admin);await db.SaveChangesAsync();
+  app.Logger.LogInformation("Initial super administrator provisioned.");
+ }
+}
 // TLS is terminated by Render proxy; do not redirect internal HTTP health probes.
 app.UseRateLimiter();app.UseAuthentication();app.UseAuthorization();
 app.UseDefaultFiles();
@@ -116,13 +133,36 @@ app.MapPost("/api/auth/login",async (LoginDto dto,CarDb db,PasswordHasher<AppUse
  var claims=new[]{new Claim(ClaimTypes.NameIdentifier,u.Id.ToString()),new Claim("agency_id",u.AgencyId.ToString()),new Claim(ClaimTypes.Role,u.Role)};
  var token=new JwtSecurityToken("CarAgency","CarAgencyClients",claims,expires:DateTime.UtcNow.AddHours(4),signingCredentials:new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)),SecurityAlgorithms.HmacSha256));
  return Results.Ok(new{accessToken=new JwtSecurityTokenHandler().WriteToken(token),expiresIn=14400,role=u.Role,username=u.Username});});
+app.MapPost("/api/auth/register",async (RegisterDto dto,CarDb db,PasswordHasher<AppUser> hasher)=>{
+ if(string.IsNullOrWhiteSpace(dto.Username)||dto.Username.Length<3||dto.Username.Length>60||string.IsNullOrWhiteSpace(dto.Password)||dto.Password.Length<10)return Results.BadRequest();
+ if(await db.Users.AnyAsync(x=>x.Username==dto.Username.Trim()))return Results.Conflict();
+ var agency=new Agency{Name="Personal account"};
+ var u=new AppUser{AgencyId=agency.Id,Username=dto.Username.Trim(),Role="User"};
+ u.PasswordHash=hasher.HashPassword(u,dto.Password);db.Agencies.Add(agency);db.Users.Add(u);await db.SaveChangesAsync();
+ return Results.Created("/api/auth/login",new {username=u.Username,role=u.Role});
+}).RequireRateLimiting("guest-submissions");
+app.MapGet("/api/admin/users",async (ClaimsPrincipal principal,CarDb db)=>{
+ var agency=Guid.Parse(principal.FindFirst("agency_id")!.Value);
+ return Results.Ok(await db.Users.Where(x=>x.AgencyId==agency).Select(x=>new{x.Id,x.Username,x.Role}).ToListAsync());
+}).RequireAuthorization("AdminOnly");
+app.MapPost("/api/admin/users",async (CreateUserDto dto,ClaimsPrincipal principal,CarDb db,PasswordHasher<AppUser> hasher)=>{
+ var agency=Guid.Parse(principal.FindFirst("agency_id")!.Value);
+ var callerRole=principal.FindFirst(ClaimTypes.Role)?.Value;
+ if(dto.Role!="Staff"&&dto.Role!="AgencyAdmin")return Results.BadRequest();
+ if(dto.Role=="AgencyAdmin"&&callerRole!="SuperAdmin")return Results.Forbid();
+ if(string.IsNullOrWhiteSpace(dto.Username)||dto.Username.Length<3||dto.Username.Length>60||string.IsNullOrWhiteSpace(dto.Password)||dto.Password.Length<10)return Results.BadRequest();
+ if(await db.Users.AnyAsync(x=>x.Username==dto.Username.Trim()))return Results.Conflict();
+ var user=new AppUser{AgencyId=agency,Username=dto.Username.Trim(),Role=dto.Role};
+ user.PasswordHash=hasher.HashPassword(user,dto.Password);db.Users.Add(user);await db.SaveChangesAsync();
+ return Results.Created("/api/admin/users",new {user.Id,user.Username,user.Role});
+}).RequireAuthorization("AdminOnly");
 // Guest submissions are separate from approved showroom inventory.
 app.MapPost("/api/public/used-submissions",async (HttpRequest request,CarDb db)=>{
  if(!request.HasFormContentType)return Results.BadRequest(new {error="multipart/form-data required"});
  var form=await request.ReadFormAsync();
  string get(string key)=>form[key].ToString().Trim();
- var name=get("name");var phone=get("phone");var make=get("make");var description=get("description");var bodyType=get("bodyType");
- if(name.Length is < 2 or > 100||phone.Length is < 7 or > 25||make.Length is < 2 or > 120||description.Length is < 5 or > 1000||
+ var name=get("name");var phone=get("phone");var make=get("make");var description=get("description");var bodyType=get("bodyType");var location=get("location");
+ if(location.Length is < 3 or > 180||name.Length is < 2 or > 100||phone.Length is < 7 or > 25||make.Length is < 2 or > 120||description.Length is < 5 or > 1000||
  !int.TryParse(get("year"),out var year)||year<1950||year>DateTime.UtcNow.Year+1||
  !decimal.TryParse(get("price"),System.Globalization.NumberStyles.Number,System.Globalization.CultureInfo.InvariantCulture,out var price)||price<=0||price>1000000000||
  !new[]{"Sedan","SUV","Hatchback","Coupe","Pickup","Van","Convertible","Wagon","Minivan","Other"}.Contains(bodyType))
@@ -135,9 +175,9 @@ app.MapPost("/api/public/used-submissions",async (HttpRequest request,CarDb db)=
  await using var transaction=await connection.BeginTransactionAsync();
  try{
  await using(var cmd=connection.CreateCommand()){
- cmd.Transaction=transaction;cmd.CommandText="""INSERT INTO "UsedCarSubmissions" ("Id","Name","Phone","Make","Year","Price","Description","BodyType","Status","CreatedAt") VALUES (@id,@name,@phone,@make,@year,@price,@description,@body,'Pending',now())""";
+ cmd.Transaction=transaction;cmd.CommandText="""INSERT INTO "UsedCarSubmissions" ("Id","Name","Phone","Make","Year","Price","Description","BodyType","Location","Status","CreatedAt") VALUES (@id,@name,@phone,@make,@year,@price,@description,@body,@location,'Pending',now())""";
  void add(string n,object v){var p=cmd.CreateParameter();p.ParameterName=n;p.Value=v;cmd.Parameters.Add(p);}
- add("id",id);add("name",name);add("phone",phone);add("make",make);add("year",year);add("price",price);add("description",description);add("body",bodyType);
+ add("id",id);add("name",name);add("phone",phone);add("make",make);add("year",year);add("price",price);add("description",description);add("body",bodyType);add("location",location);
  await cmd.ExecuteNonQueryAsync();}
  foreach(var file in photos){
  await using var ms=new MemoryStream();await file.CopyToAsync(ms);
@@ -189,6 +229,8 @@ api.MapPost("/vehicles",async (VehicleDto dto,ClaimsPrincipal user,CarDb db)=>{v
 api.MapGet("/customers",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);return await db.Customers.Where(x=>x.AgencyId==a).ToListAsync();});
 api.MapPost("/customers",async (CustomerDto dto,ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);var c=new Customer{AgencyId=a,FullName=dto.FullName,Phone=dto.Phone};db.Customers.Add(c);await db.SaveChangesAsync();return Results.Created($"/api/customers/{c.Id}",c);});
 app.Run();
+record RegisterDto(string Username,string Password);
+record CreateUserDto(string Username,string Password,string Role);
 record LoginDto(string Username,string Password);
 record VehicleDto(Guid BranchId,string Vin,string Make,string Model,int Year,decimal Cost,decimal Price);
 record CustomerDto(string FullName,string Phone);
