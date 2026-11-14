@@ -222,7 +222,7 @@ app.MapPost("/api/public/used-submissions",async (HttpRequest request,CarDb db)=
  if(location.Length is < 3 or > 180||name.Length is < 2 or > 100||phone.Length is < 7 or > 25||make.Length is < 2 or > 120||description.Length is < 5 or > 1000||
  !int.TryParse(get("year"),out var year)||year<1950||year>DateTime.UtcNow.Year+1||
  !decimal.TryParse(get("price"),System.Globalization.NumberStyles.Number,System.Globalization.CultureInfo.InvariantCulture,out var price)||price<=0||price>1000000000||
- !new[]{"Sedan","SUV","Hatchback","Coupe","Pickup","Van","Convertible","Wagon","Minivan","Other"}.Contains(bodyType))
+ !new[]{"Sedan","SUV","Hatchback","Coupe","Pickup","Van","Convertible","Wagon","Minivan","Crossover","MPV","Truck","Other"}.Contains(bodyType))
  return Results.BadRequest(new {error="Invalid submission"});
  var photos=form.Files.GetFiles("photos");
  if(photos.Count is < 1 or > 8||photos.Any(p=>p.Length==0||p.Length>3_000_000||!new[]{"image/jpeg","image/png","image/webp"}.Contains(p.ContentType.ToLowerInvariant())))
