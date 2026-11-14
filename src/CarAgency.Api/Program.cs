@@ -89,8 +89,8 @@ app.MapPost("/api/auth/login",async (LoginDto dto,CarDb db,PasswordHasher<AppUse
  if(u==null||hasher.VerifyHashedPassword(u,u.PasswordHash,dto.Password)==PasswordVerificationResult.Failed)return Results.Unauthorized();
  var claims=new[]{new Claim(ClaimTypes.NameIdentifier,u.Id.ToString()),new Claim("agency_id",u.AgencyId.ToString()),new Claim(ClaimTypes.Role,u.Role)};
  var token=new JwtSecurityToken("CarAgency","CarAgencyClients",claims,expires:DateTime.UtcNow.AddHours(4),signingCredentials:new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)),SecurityAlgorithms.HmacSha256));
- return Results.Ok(new{accessToken=new JwtSecurityTokenHandler().WriteToken(token),expiresIn=14400});});
-var api=app.MapGroup("/api").RequireAuthorization();
+ return Results.Ok(new{accessToken=new JwtSecurityTokenHandler().WriteToken(token),expiresIn=14400,role=u.Role,username=u.Username});});
+var api=app.MapGroup("/api").RequireAuthorization("StaffOrAdmin");
 api.MapGet("/dashboard",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);return Results.Ok(new{vehicles=await db.Vehicles.CountAsync(x=>x.AgencyId==a),available=await db.Vehicles.CountAsync(x=>x.AgencyId==a&&x.Status=="Available"),customers=await db.Customers.CountAsync(x=>x.AgencyId==a),sales=await db.Sales.CountAsync(x=>x.AgencyId==a)});});
 api.MapGet("/vehicles",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);return await db.Vehicles.Where(x=>x.AgencyId==a).OrderBy(x=>x.Make).ToListAsync();});
 api.MapPatch("/vehicles/{id:guid}/publication",async (Guid id,PublicationDto dto,ClaimsPrincipal user,CarDb db)=>{
