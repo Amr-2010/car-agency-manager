@@ -257,6 +257,14 @@ app.MapGet("/api/admin/used-submissions/{submissionId:guid}/photos/{photoId:guid
  await using var reader=await cmd.ExecuteReaderAsync();if(!await reader.ReadAsync())return Results.NotFound();
  return Results.File((byte[])reader.GetValue(1),reader.GetString(0));
 }).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
+app.MapGet("/api/admin/used-submissions/{submissionId:guid}/photos",async (Guid submissionId,CarDb db)=>{
+ var ids=new List<Guid>();
+ await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
+ await using var cmd=conn.CreateCommand();cmd.CommandText="""SELECT "Id" FROM "UsedCarSubmissionPhotos" WHERE "SubmissionId"=@id ORDER BY "Id" LIMIT 8""";
+ var p=cmd.CreateParameter();p.ParameterName="id";p.Value=submissionId;cmd.Parameters.Add(p);
+ await using var reader=await cmd.ExecuteReaderAsync();while(await reader.ReadAsync())ids.Add(reader.GetGuid(0));
+ return Results.Ok(ids);
+}).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
 app.MapGet("/api/admin/used-submissions",async (CarDb db)=>{
  var rows=new List<object>();
  await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
