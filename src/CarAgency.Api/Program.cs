@@ -217,7 +217,7 @@ app.MapPatch("/api/admin/used-submissions/{id:guid}/status",async (Guid id,Submi
  return await cmd.ExecuteNonQueryAsync()==0?Results.NotFound():Results.Ok(new{id,status=dto.Status});
 }).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
 var api=app.MapGroup("/api").RequireAuthorization("StaffOrAdmin");
-api.MapGet("/dashboard",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);return Results.Ok(new{vehicles=await db.Vehicles.CountAsync(x=>x.AgencyId==a),available=await db.Vehicles.CountAsync(x=>x.AgencyId==a&&x.Status=="Available"),customers=await db.Customers.CountAsync(x=>x.AgencyId==a),sales=await db.Sales.CountAsync(x=>x.AgencyId==a)});});
+api.MapGet("/dashboard",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);var all=user.IsInRole("SuperAdmin");return Results.Ok(new{vehicles=await db.Vehicles.CountAsync(x=>all||x.AgencyId==a),available=await db.Vehicles.CountAsync(x=>(all||x.AgencyId==a)&&x.Status=="Available"),customers=await db.Customers.CountAsync(x=>all||x.AgencyId==a),sales=await db.Sales.CountAsync(x=>all||x.AgencyId==a)});});
 api.MapGet("/vehicles",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);var isSuper=user.IsInRole("SuperAdmin");return await db.Vehicles.Where(x=>isSuper||x.AgencyId==a).OrderBy(x=>x.Make).ToListAsync();});
 api.MapPatch("/vehicles/{id:guid}/publication",async (Guid id,PublicationDto dto,ClaimsPrincipal user,CarDb db)=>{
  var agency=Guid.Parse(user.FindFirst("agency_id")!.Value);
