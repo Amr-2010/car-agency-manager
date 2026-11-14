@@ -218,10 +218,10 @@ app.MapPatch("/api/admin/used-submissions/{id:guid}/status",async (Guid id,Submi
 }).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
 var api=app.MapGroup("/api").RequireAuthorization("StaffOrAdmin");
 api.MapGet("/dashboard",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);return Results.Ok(new{vehicles=await db.Vehicles.CountAsync(x=>x.AgencyId==a),available=await db.Vehicles.CountAsync(x=>x.AgencyId==a&&x.Status=="Available"),customers=await db.Customers.CountAsync(x=>x.AgencyId==a),sales=await db.Sales.CountAsync(x=>x.AgencyId==a)});});
-api.MapGet("/vehicles",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);return await db.Vehicles.Where(x=>x.AgencyId==a).OrderBy(x=>x.Make).ToListAsync();});
+api.MapGet("/vehicles",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);var isSuper=user.IsInRole("SuperAdmin");return await db.Vehicles.Where(x=>isSuper||x.AgencyId==a).OrderBy(x=>x.Make).ToListAsync();});
 api.MapPatch("/vehicles/{id:guid}/publication",async (Guid id,PublicationDto dto,ClaimsPrincipal user,CarDb db)=>{
  var agency=Guid.Parse(user.FindFirst("agency_id")!.Value);
- var v=await db.Vehicles.FirstOrDefaultAsync(x=>x.Id==id&&x.AgencyId==agency);
+ var v=await db.Vehicles.FirstOrDefaultAsync(x=>x.Id==id&&(user.FindFirst(ClaimTypes.Role)!.Value=="SuperAdmin"||x.AgencyId==agency));
  if(v==null)return Results.NotFound();
  v.IsPublished=dto.IsPublished;
  // Approval is separate and cannot be changed through publication endpoint.
@@ -229,11 +229,11 @@ api.MapPatch("/vehicles/{id:guid}/publication",async (Guid id,PublicationDto dto
 }).RequireAuthorization("AdminOnly");
 api.MapPatch("/vehicles/{id:guid}/approval",async (Guid id,ApprovalDto dto,ClaimsPrincipal user,CarDb db)=>{
  var agency=Guid.Parse(user.FindFirst("agency_id")!.Value);
- var v=await db.Vehicles.FirstOrDefaultAsync(x=>x.Id==id&&x.AgencyId==agency);
+ var v=await db.Vehicles.FirstOrDefaultAsync(x=>x.Id==id&&(user.FindFirst(ClaimTypes.Role)!.Value=="SuperAdmin"||x.AgencyId==agency));
  if(v==null)return Results.NotFound();
  v.IsApproved=dto.IsApproved;await db.SaveChangesAsync();return Results.Ok(new {v.Id,v.IsPublished,v.IsApproved});
 }).RequireAuthorization("AdminOnly");
-api.MapPost("/vehicles",async (VehicleDto dto,ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);if(!await db.Branches.AnyAsync(x=>x.Id==dto.BranchId&&x.AgencyId==a))return Results.BadRequest("Invalid branch");if(dto.Year<1900||dto.Price<0||string.IsNullOrWhiteSpace(dto.Vin))return Results.BadRequest("Invalid vehicle");var v=new Vehicle{AgencyId=a,BranchId=dto.BranchId,Vin=dto.Vin.Trim(),Make=dto.Make,Model=dto.Model,Year=dto.Year,Cost=dto.Cost,Price=dto.Price};db.Vehicles.Add(v);await db.SaveChangesAsync();return Results.Created($"/api/vehicles/{v.Id}",v);}).RequireAuthorization("AdminOnly");
+api.MapPost("/vehicles",async (VehicleDto dto,ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);var branch=await db.Branches.FirstOrDefaultAsync(x=>x.Id==dto.BranchId);if(branch==null||(user.FindFirst(ClaimTypes.Role)?.Value!="SuperAdmin"&&branch.AgencyId!=a))return Results.BadRequest("Invalid branch");a=branch.AgencyId;if(dto.Year<1900||dto.Price<0||string.IsNullOrWhiteSpace(dto.Vin))return Results.BadRequest("Invalid vehicle");var v=new Vehicle{AgencyId=a,BranchId=dto.BranchId,Vin=dto.Vin.Trim(),Make=dto.Make,Model=dto.Model,Year=dto.Year,Cost=dto.Cost,Price=dto.Price};db.Vehicles.Add(v);await db.SaveChangesAsync();return Results.Created($"/api/vehicles/{v.Id}",v);}).RequireAuthorization("AdminOnly");
 // Super administrators can manage all agencies; ordinary managers remain agency-scoped.
 api.MapGet("/branches",async (ClaimsPrincipal user,CarDb db)=>{
  var role=user.FindFirst(ClaimTypes.Role)?.Value;var a=Guid.Parse(user.FindFirst("agency_id")!.Value);
