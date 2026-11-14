@@ -39,7 +39,22 @@ builder.Services.AddAuthorization(o=>{o.AddPolicy("AdminOnly",p=>p.RequireRole("
 var app=builder.Build();
 // TLS is terminated by Render proxy; do not redirect internal HTTP health probes.
 app.UseAuthentication();app.UseAuthorization();
+app.MapGet("/", () => Results.Content("""
+<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Car Agency Manager</title><style>body{font-family:system-ui,Arial;background:#f3f7fc;color:#152c4a;margin:0}main{max-width:720px;margin:12vh auto;padding:32px;background:white;border-radius:18px;box-shadow:0 8px 35px #163a6c16}h1{color:#1157a7}a{display:inline-block;margin:8px 0 8px 12px;padding:12px 18px;background:#155fb4;color:white;border-radius:8px;text-decoration:none}p{line-height:1.8}</style></head><body><main><h1>Car Agency Manager</h1><p>خدمة ASP.NET Core API تعمل. موقع عرض السيارات ولوحة الإدارة تطبيقان منفصلان ولم يتم نشر واجهاتهما هنا بعد.</p><a href="/health">حالة الخدمة</a><a href="/api/public/vehicles">واجهة السيارات العامة (JSON)</a></main></body></html>
+""", "text/html; charset=utf-8"));
 app.MapGet("/health",()=>Results.Ok(new {status="ok"}));
+app.MapGet("/health/database", async (CarDb db) =>
+{
+    try
+    {
+        var connected = await db.Database.CanConnectAsync();
+        return connected ? Results.Ok(new { status = "connected" }) : Results.Problem("Database connection failed", statusCode: 503);
+    }
+    catch
+    {
+        return Results.Problem("Database connection failed", statusCode: 503);
+    }
+});
 // Public catalog: no credentials, no cost, VIN, customer or internal data.
 app.MapGet("/api/public/vehicles",async (CarDb db,string? make,int page=1,int pageSize=12)=>{
  page=Math.Max(1,page);pageSize=Math.Clamp(pageSize,1,48);
