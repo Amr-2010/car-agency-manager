@@ -148,4 +148,5 @@ record CustomerDto(string FullName,string Phone);
 
 record PublicationDto(bool IsPublished);
 record ApprovalDto(bool IsApproved);
-\nrecord UsedSubmissionDto(string Name,string Phone,string Make,int Year,decimal Price,string Description);\n
+
+record UsedSubmissionDto(string Name,string Phone,string Make,int Year,decimal Price,string Description);
