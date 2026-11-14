@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS "UsedCarSubmissionPhotos" (
  "ImageData" bytea NOT NULL
 );
 """);
+        await database.Database.ExecuteSqlRawAsync("""ALTER TABLE "UsedCarSubmissions" ADD COLUMN IF NOT EXISTS "Email" varchar(254) NOT NULL DEFAULT '';""");
         await database.Database.ExecuteSqlRawAsync("""ALTER TABLE "UsedCarSubmissions" ADD COLUMN IF NOT EXISTS "Location" varchar(180) NOT NULL DEFAULT '';""");
         await database.Database.ExecuteSqlRawAsync("""
 CREATE TABLE IF NOT EXISTS "VehiclePhotos" (
@@ -218,8 +219,9 @@ app.MapPost("/api/public/used-submissions",async (HttpRequest request,CarDb db)=
  if(!request.HasFormContentType)return Results.BadRequest(new {error="multipart/form-data required"});
  var form=await request.ReadFormAsync();
  string get(string key)=>form[key].ToString().Trim();
- var name=get("name");var phone=get("phone");var make=get("make");var description=get("description");var bodyType=get("bodyType");var location=get("location");
- if(location.Length is < 3 or > 180||name.Length is < 2 or > 100||phone.Length is < 7 or > 25||make.Length is < 2 or > 120||description.Length is < 5 or > 1000||
+ var name=get("name");var phone=get("phone");var email=get("email");var make=get("make");var description=get("description");var bodyType=get("bodyType");var location=get("location");
+ if(!System.Net.Mail.MailAddress.TryCreate(email,out var parsedEmail)||parsedEmail.Address!=email||email.Length>254)return Results.BadRequest(new {error="يرجى إدخال بريد إلكتروني صحيح"});
+ if(location.Length is < 3 or > 180||name.Length is < 2 or > 100||phone.Length is < 7 or > 25||make.Length is < 2 or > 120||description.Length is < 2 or > 1000||
  !int.TryParse(get("year"),out var year)||year<1950||year>DateTime.UtcNow.Year+1||
  !decimal.TryParse(get("price"),System.Globalization.NumberStyles.Number,System.Globalization.CultureInfo.InvariantCulture,out var price)||price<=0||price>1000000000||
  !new[]{"Sedan","SUV","Hatchback","Coupe","Pickup","Van","Convertible","Wagon","Minivan","Crossover","MPV","Truck","Other"}.Contains(bodyType))
@@ -232,9 +234,9 @@ app.MapPost("/api/public/used-submissions",async (HttpRequest request,CarDb db)=
  await using var transaction=await connection.BeginTransactionAsync();
  try{
  await using(var cmd=connection.CreateCommand()){
- cmd.Transaction=transaction;cmd.CommandText="""INSERT INTO "UsedCarSubmissions" ("Id","Name","Phone","Make","Year","Price","Description","BodyType","Location","Status","CreatedAt") VALUES (@id,@name,@phone,@make,@year,@price,@description,@body,@location,'Pending',now())""";
+ cmd.Transaction=transaction;cmd.CommandText="""INSERT INTO "UsedCarSubmissions" ("Id","Name","Phone","Email","Make","Year","Price","Description","BodyType","Location","Status","CreatedAt") VALUES (@id,@name,@phone,@email,@make,@year,@price,@description,@body,@location,'Pending',now())""";
  void add(string n,object v){var p=cmd.CreateParameter();p.ParameterName=n;p.Value=v;cmd.Parameters.Add(p);}
- add("id",id);add("name",name);add("phone",phone);add("make",make);add("year",year);add("price",price);add("description",description);add("body",bodyType);add("location",location);
+ add("id",id);add("name",name);add("phone",phone);add("email",email);add("make",make);add("year",year);add("price",price);add("description",description);add("body",bodyType);add("location",location);
  await cmd.ExecuteNonQueryAsync();}
  foreach(var file in photos){
  await using var ms=new MemoryStream();await file.CopyToAsync(ms);
@@ -268,18 +270,39 @@ app.MapGet("/api/admin/used-submissions/{submissionId:guid}/photos",async (Guid 
 app.MapGet("/api/admin/used-submissions",async (CarDb db)=>{
  var rows=new List<object>();
  await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
- await using var cmd=conn.CreateCommand();cmd.CommandText="""SELECT "Id","Name","Phone","Make","Year","Price","Description","Status","CreatedAt","Location","BodyType" FROM "UsedCarSubmissions" ORDER BY "CreatedAt" DESC LIMIT 200""";
+ await using var cmd=conn.CreateCommand();cmd.CommandText="""SELECT "Id","Name","Phone","Make","Year","Price","Description","Status","CreatedAt","Location","BodyType","Email" FROM "UsedCarSubmissions" ORDER BY "CreatedAt" DESC LIMIT 200""";
  await using var reader=await cmd.ExecuteReaderAsync();
- while(await reader.ReadAsync())rows.Add(new{id=reader.GetGuid(0),name=reader.GetString(1),phone=reader.GetString(2),make=reader.GetString(3),year=reader.GetInt32(4),price=reader.GetDecimal(5),description=reader.GetString(6),status=reader.GetString(7),createdAt=reader.GetDateTime(8),location=reader.GetString(9),bodyType=reader.GetString(10)});
+ while(await reader.ReadAsync())rows.Add(new{id=reader.GetGuid(0),name=reader.GetString(1),phone=reader.GetString(2),make=reader.GetString(3),year=reader.GetInt32(4),price=reader.GetDecimal(5),description=reader.GetString(6),status=reader.GetString(7),createdAt=reader.GetDateTime(8),location=reader.GetString(9),bodyType=reader.GetString(10),email=reader.GetString(11)});
  return Results.Ok(rows);
 }).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
-app.MapPatch("/api/admin/used-submissions/{id:guid}/status",async (Guid id,SubmissionStatusDto dto,CarDb db)=>{
+app.MapPatch("/api/admin/used-submissions/{id:guid}/status",async (Guid id,SubmissionStatusDto dto,CarDb db,IConfiguration config,ILogger<Program> logger)=>{
  if(!new[]{"Approved","Rejected","Pending"}.Contains(dto.Status))return Results.BadRequest();
- await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
- await using var cmd=conn.CreateCommand();cmd.CommandText="""UPDATE "UsedCarSubmissions" SET "Status"=@status WHERE "Id"=@id""";
+ string? email=null;string? owner=null;string? car=null;
+ await using(var conn=db.Database.GetDbConnection()){
+ await conn.OpenAsync();
+ await using(var cmd=conn.CreateCommand()){
+ cmd.CommandText="""UPDATE "UsedCarSubmissions" SET "Status"=@status WHERE "Id"=@id RETURNING "Email","Name","Make" """;
  var p=cmd.CreateParameter();p.ParameterName="status";p.Value=dto.Status;cmd.Parameters.Add(p);
  p=cmd.CreateParameter();p.ParameterName="id";p.Value=id;cmd.Parameters.Add(p);
- return await cmd.ExecuteNonQueryAsync()==0?Results.NotFound():Results.Ok(new{id,status=dto.Status});
+ await using var reader=await cmd.ExecuteReaderAsync();
+ if(!await reader.ReadAsync())return Results.NotFound();
+ email=reader.GetString(0);owner=reader.GetString(1);car=reader.GetString(2);
+ }}
+ var notified=false;
+ if(dto.Status!="Pending"&&!string.IsNullOrWhiteSpace(email)){
+ try{
+ var host=config["SMTP_HOST"];var sender=config["SMTP_FROM"];var username=config["SMTP_USER"];var password=config["SMTP_PASSWORD"];
+ if(!string.IsNullOrWhiteSpace(host)&&!string.IsNullOrWhiteSpace(sender)){
+ using var mail=new System.Net.Mail.MailMessage(sender,email);
+ mail.Subject=dto.Status=="Approved"?"Car Agency - تمت الموافقة على إعلانك":"Car Agency - تم رفض إعلانك";
+ mail.Body=$"مرحبًا {owner}،\nحالة إعلان السيارة {car}: "+(dto.Status=="Approved"?"تمت الموافقة":"تم الرفض")+".\nرقم الطلب: "+id;
+ using var smtp=new System.Net.Mail.SmtpClient(host,int.TryParse(config["SMTP_PORT"],out var port)?port:587){EnableSsl=true,DeliveryMethod=System.Net.Mail.SmtpDeliveryMethod.Network};
+ if(!string.IsNullOrWhiteSpace(username))smtp.Credentials=new System.Net.NetworkCredential(username,password);
+ await smtp.SendMailAsync(mail);notified=true;
+ }else logger.LogWarning("SMTP settings are missing; submission {SubmissionId} status saved without email",id);
+ }catch(Exception ex){logger.LogError(ex,"Could not send submission status email for {SubmissionId}",id);}
+ }
+ return Results.Ok(new{id,status=dto.Status,emailSent=notified});
 }).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
 var api=app.MapGroup("/api").RequireAuthorization("StaffOrAdmin");
 api.MapGet("/dashboard",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);var all=user.IsInRole("SuperAdmin");return Results.Ok(new{vehicles=await db.Vehicles.CountAsync(x=>all||x.AgencyId==a),available=await db.Vehicles.CountAsync(x=>(all||x.AgencyId==a)&&x.Status=="Available"),customers=await db.Customers.CountAsync(x=>all||x.AgencyId==a),sales=await db.Sales.CountAsync(x=>all||x.AgencyId==a)});});
