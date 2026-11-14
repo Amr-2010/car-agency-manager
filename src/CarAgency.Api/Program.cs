@@ -58,7 +58,17 @@ CREATE TABLE IF NOT EXISTS "UsedCarSubmissions" (
  "Price" numeric(18,2) NOT NULL,
  "Description" varchar(1000) NOT NULL,
  "Status" varchar(20) NOT NULL DEFAULT 'Pending',
- "CreatedAt" timestamptz NOT NULL DEFAULT now()
+ "CreatedAt" timestamptz NOT NULL DEFAULT now(),
+ "BodyType" varchar(40) NOT NULL DEFAULT 'Other'
+);
+""");
+        await database.Database.ExecuteSqlRawAsync("""ALTER TABLE "UsedCarSubmissions" ADD COLUMN IF NOT EXISTS "BodyType" varchar(40) NOT NULL DEFAULT 'Other';""");
+        await database.Database.ExecuteSqlRawAsync("""
+CREATE TABLE IF NOT EXISTS "UsedCarSubmissionPhotos" (
+ "Id" uuid PRIMARY KEY,
+ "SubmissionId" uuid NOT NULL REFERENCES "UsedCarSubmissions"("Id") ON DELETE CASCADE,
+ "MimeType" varchar(30) NOT NULL,
+ "ImageData" bytea NOT NULL
 );
 """);
         app.Logger.LogInformation("Car Agency database schema verified.");
@@ -107,12 +117,49 @@ app.MapPost("/api/auth/login",async (LoginDto dto,CarDb db,PasswordHasher<AppUse
  var token=new JwtSecurityToken("CarAgency","CarAgencyClients",claims,expires:DateTime.UtcNow.AddHours(4),signingCredentials:new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)),SecurityAlgorithms.HmacSha256));
  return Results.Ok(new{accessToken=new JwtSecurityTokenHandler().WriteToken(token),expiresIn=14400,role=u.Role,username=u.Username});});
 // Guest submissions are separate from approved showroom inventory.
-app.MapPost("/api/public/used-submissions",async (UsedSubmissionDto dto,CarDb db,HttpContext http)=>{
- if(string.IsNullOrWhiteSpace(dto.Name)||dto.Name.Length>100||string.IsNullOrWhiteSpace(dto.Phone)||dto.Phone.Length>25||string.IsNullOrWhiteSpace(dto.Make)||dto.Make.Length>120||dto.Year<1950||dto.Year>DateTime.UtcNow.Year+1||dto.Price<=0||dto.Price>1000000000||string.IsNullOrWhiteSpace(dto.Description)||dto.Description.Length>1000)
-  return Results.BadRequest(new {error="Invalid submission"});
- await db.Database.ExecuteSqlInterpolatedAsync($"""INSERT INTO "UsedCarSubmissions" ("Id","Name","Phone","Make","Year","Price","Description","Status","CreatedAt") VALUES ({Guid.NewGuid()},{dto.Name.Trim()},{dto.Phone.Trim()},{dto.Make.Trim()},{dto.Year},{dto.Price},{dto.Description.Trim()} ,'Pending',now())""");
- return Results.Accepted(value:new {status="Pending"});
-}).RequireRateLimiting("guest-submissions");
+app.MapPost("/api/public/used-submissions",async (HttpRequest request,CarDb db)=>{
+ if(!request.HasFormContentType)return Results.BadRequest(new {error="multipart/form-data required"});
+ var form=await request.ReadFormAsync();
+ string get(string key)=>form[key].ToString().Trim();
+ var name=get("name");var phone=get("phone");var make=get("make");var description=get("description");var bodyType=get("bodyType");
+ if(name.Length is < 2 or > 100||phone.Length is < 7 or > 25||make.Length is < 2 or > 120||description.Length is < 5 or > 1000||
+ !int.TryParse(get("year"),out var year)||year<1950||year>DateTime.UtcNow.Year+1||
+ !decimal.TryParse(get("price"),System.Globalization.NumberStyles.Number,System.Globalization.CultureInfo.InvariantCulture,out var price)||price<=0||price>1000000000||
+ !new[]{"Sedan","SUV","Hatchback","Coupe","Pickup","Van","Convertible","Wagon","Minivan","Other"}.Contains(bodyType))
+ return Results.BadRequest(new {error="Invalid submission"});
+ var photos=form.Files.GetFiles("photos");
+ if(photos.Count is < 1 or > 8||photos.Any(p=>p.Length==0||p.Length>3_000_000||!new[]{"image/jpeg","image/png","image/webp"}.Contains(p.ContentType.ToLowerInvariant())))
+ return Results.BadRequest(new {error="1-8 JPEG, PNG or WebP images, max 3 MB each"});
+ var id=Guid.NewGuid();
+ await using var connection=db.Database.GetDbConnection();await connection.OpenAsync();
+ await using var transaction=await connection.BeginTransactionAsync();
+ try{
+ await using(var cmd=connection.CreateCommand()){
+ cmd.Transaction=transaction;cmd.CommandText="""INSERT INTO "UsedCarSubmissions" ("Id","Name","Phone","Make","Year","Price","Description","BodyType","Status","CreatedAt") VALUES (@id,@name,@phone,@make,@year,@price,@description,@body,'Pending',now())""";
+ void add(string n,object v){var p=cmd.CreateParameter();p.ParameterName=n;p.Value=v;cmd.Parameters.Add(p);}
+ add("id",id);add("name",name);add("phone",phone);add("make",make);add("year",year);add("price",price);add("description",description);add("body",bodyType);
+ await cmd.ExecuteNonQueryAsync();}
+ foreach(var file in photos){
+ await using var ms=new MemoryStream();await file.CopyToAsync(ms);
+ var bytes=ms.ToArray();
+ if(bytes.Length<12||!(bytes[0]==0xFF&&bytes[1]==0xD8||bytes[0]==0x89&&bytes[1]==0x50&&bytes[2]==0x4E&&bytes[3]==0x47||bytes[0]==0x52&&bytes[1]==0x49&&bytes[2]==0x46&&bytes[3]==0x46&&bytes[8]==0x57&&bytes[9]==0x45&&bytes[10]==0x42&&bytes[11]==0x50))
+ {await transaction.RollbackAsync();return Results.BadRequest(new {error="Invalid image content"});}
+ await using var cmd=connection.CreateCommand();cmd.Transaction=transaction;
+ cmd.CommandText="""INSERT INTO "UsedCarSubmissionPhotos" ("Id","SubmissionId","MimeType","ImageData") VALUES (@id,@sid,@mime,@data)""";
+ foreach(var (key,value) in new (string,object)[]{("id",Guid.NewGuid()),("sid",id),("mime",file.ContentType.ToLowerInvariant()),("data",bytes)}){
+ var p=cmd.CreateParameter();p.ParameterName=key;p.Value=value;cmd.Parameters.Add(p);}
+ await cmd.ExecuteNonQueryAsync();
+ }
+ await transaction.CommitAsync();return Results.Accepted(value:new {id,status="Pending",photos=photos.Count});
+ }catch{await transaction.RollbackAsync();throw;}
+}).DisableAntiforgery().RequireRateLimiting("guest-submissions");
+app.MapGet("/api/admin/used-submissions/{submissionId:guid}/photos/{photoId:guid}",async (Guid submissionId,Guid photoId,CarDb db)=>{
+ await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
+ await using var cmd=conn.CreateCommand();cmd.CommandText="""SELECT "MimeType","ImageData" FROM "UsedCarSubmissionPhotos" WHERE "Id"=@photo AND "SubmissionId"=@submission""";
+ foreach(var (key,value) in new[]{("photo",photoId),("submission",submissionId)}){var p=cmd.CreateParameter();p.ParameterName=key;p.Value=value;cmd.Parameters.Add(p);}
+ await using var reader=await cmd.ExecuteReaderAsync();if(!await reader.ReadAsync())return Results.NotFound();
+ return Results.File((byte[])reader.GetValue(1),reader.GetString(0));
+}).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
 app.MapGet("/api/admin/used-submissions",async (CarDb db)=>{
  var rows=new List<object>();
  await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
@@ -149,4 +196,4 @@ record CustomerDto(string FullName,string Phone);
 record PublicationDto(bool IsPublished);
 record ApprovalDto(bool IsApproved);
 
-record UsedSubmissionDto(string Name,string Phone,string Make,int Year,decimal Price,string Description);
+
