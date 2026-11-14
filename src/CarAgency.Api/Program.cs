@@ -9,7 +9,25 @@ using Microsoft.AspNetCore.Identity;
 var builder=WebApplication.CreateBuilder(args);
 // Prefer Render environment values; empty appsettings entries must not shadow them.
 var cs = Environment.GetEnvironmentVariable("DATABASE_CONNECTION_STRING");
+if (string.IsNullOrWhiteSpace(cs)) cs = Environment.GetEnvironmentVariable("DATABASE_URL");
 if (string.IsNullOrWhiteSpace(cs)) cs = builder.Configuration.GetConnectionString("Database");
+if (!string.IsNullOrWhiteSpace(cs) && (cs.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) || cs.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase)))
+{
+    var uri = new Uri(cs);
+    var userInfo = uri.UserInfo.Split(':', 2);
+    if (userInfo.Length != 2) throw new InvalidOperationException("PostgreSQL URL must include username and password.");
+    var dbName = Uri.UnescapeDataString(uri.AbsolutePath.TrimStart('/'));
+    var npgsql = new Npgsql.NpgsqlConnectionStringBuilder
+    {
+        Host = uri.Host,
+        Port = uri.IsDefaultPort ? 5432 : uri.Port,
+        Database = dbName,
+        Username = Uri.UnescapeDataString(userInfo[0]),
+        Password = Uri.UnescapeDataString(userInfo[1]),
+        SslMode = Npgsql.SslMode.Require
+    };
+    cs = npgsql.ConnectionString;
+}
 var key = Environment.GetEnvironmentVariable("JWT_KEY");
 if (string.IsNullOrWhiteSpace(key)) key = builder.Configuration["Jwt:Key"];
 if (string.IsNullOrWhiteSpace(cs)) throw new InvalidOperationException("DATABASE_CONNECTION_STRING is missing. Set it in Render > Environment.");
