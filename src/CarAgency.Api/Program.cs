@@ -82,6 +82,35 @@ CREATE TABLE IF NOT EXISTS "VehiclePhotos" (
  "SortOrder" integer NOT NULL DEFAULT 0
 );
 """);
+        await database.Database.ExecuteSqlRawAsync("""
+CREATE TABLE IF NOT EXISTS "DemoSeedHistory" ("Key" varchar(80) PRIMARY KEY, "CreatedAt" timestamptz NOT NULL DEFAULT now());
+""");
+        // Seed once per database. Deleting a sample later never recreates it.
+        if(!await database.Database.SqlQueryRaw<int>("""SELECT 1 AS "Value" FROM "DemoSeedHistory" WHERE "Key"='initial-six-cars'""").AnyAsync())
+        {
+            await using var seedTx=await database.Database.BeginTransactionAsync();
+            // Use the existing administrator's agency, otherwise create a dedicated showroom.
+            var agency=await database.Agencies.OrderBy(x=>x.Name=="Car Agency Main"?0:1).FirstOrDefaultAsync();
+            if(agency==null){agency=new Agency{Name="Car Agency Main"};database.Agencies.Add(agency);await database.SaveChangesAsync();}
+            var branch=await database.Branches.FirstOrDefaultAsync(x=>x.AgencyId==agency.Id);
+            if(branch==null){branch=new Branch{AgencyId=agency.Id,Name="Main Showroom"};database.Branches.Add(branch);await database.SaveChangesAsync();}
+            var samples=new (string Vin,string Make,string Model,int Year,decimal Price,string Image)[]
+            {
+                ("DEMO-CA-001","Toyota","Corolla",2025,1450000m,"https://images.unsplash.com/photo-1621007947382-bb3c3994e3fb?w=800&q=80"),
+                ("DEMO-CA-002","BMW","3 Series",2024,2950000m,"https://images.unsplash.com/photo-1555215695-3004980ad54e?w=800&q=80"),
+                ("DEMO-CA-003","Mercedes-Benz","C-Class",2025,3450000m,"https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?w=800&q=80"),
+                ("DEMO-CA-004","Hyundai","Elantra",2021,850000m,"https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=800&q=80"),
+                ("DEMO-CA-005","Kia","Sportage",2020,1100000m,"https://images.unsplash.com/photo-1503376780353-7e6692767b70?w=800&q=80"),
+                ("DEMO-CA-006","Nissan","Sunny",2019,520000m,"https://images.unsplash.com/photo-1494976388531-d1058494cdd8?w=800&q=80")
+            };
+            foreach(var s in samples)
+                if(!await database.Vehicles.AnyAsync(v=>v.Vin==s.Vin))
+                    database.Vehicles.Add(new Vehicle{AgencyId=agency.Id,BranchId=branch.Id,Vin=s.Vin,Make=s.Make,Model=s.Model,Year=s.Year,Price=s.Price,Cost=0,ImageUrl=s.Image,IsApproved=true,IsPublished=true,Status="Available"});
+            await database.SaveChangesAsync();
+            await database.Database.ExecuteSqlRawAsync("""INSERT INTO "DemoSeedHistory" ("Key") VALUES ('initial-six-cars') ON CONFLICT DO NOTHING""");
+            await seedTx.CommitAsync();
+            app.Logger.LogInformation("Initial six demo vehicles seeded once.");
+        }
         app.Logger.LogInformation("Car Agency database schema verified.");
     }
     catch (Exception ex)
@@ -279,6 +308,14 @@ api.MapPost("/agencies",async (AgencyDto dto,CarDb db)=>{
  if(string.IsNullOrWhiteSpace(dto.Name)||dto.Name.Length>120)return Results.BadRequest();
  var a=new Agency{Name=dto.Name.Trim()};db.Agencies.Add(a);await db.SaveChangesAsync();return Results.Created("/api/agencies",new{a.Id,a.Name});
 }).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
+api.MapPut("/vehicles/{id:guid}",async (Guid id,VehicleEditDto dto,ClaimsPrincipal user,CarDb db)=>{
+ var agency=Guid.Parse(user.FindFirst("agency_id")!.Value);
+ var v=await db.Vehicles.FirstOrDefaultAsync(x=>x.Id==id&&(user.IsInRole("SuperAdmin")||x.AgencyId==agency));
+ if(v==null)return Results.NotFound();
+ if(string.IsNullOrWhiteSpace(dto.Make)||string.IsNullOrWhiteSpace(dto.Model)||dto.Year<1900||dto.Year>DateTime.UtcNow.Year+2||dto.Price<0||dto.Cost<0)return Results.BadRequest(new{error="Invalid vehicle details"});
+ v.Make=dto.Make.Trim();v.Model=dto.Model.Trim();v.Year=dto.Year;v.Price=dto.Price;v.Cost=dto.Cost;
+ await db.SaveChangesAsync();return Results.Ok(new{v.Id,v.Make,v.Model,v.Year,v.Price,v.Cost});
+}).RequireAuthorization("AdminOnly");
 api.MapDelete("/vehicles/{id:guid}",async (Guid id,ClaimsPrincipal user,CarDb db)=>{
  var role=user.FindFirst(ClaimTypes.Role)?.Value;var agency=Guid.Parse(user.FindFirst("agency_id")!.Value);
  var v=await db.Vehicles.FirstOrDefaultAsync(x=>x.Id==id&&(role=="SuperAdmin"||x.AgencyId==agency));
@@ -328,3 +365,4 @@ record PublicationDto(bool IsPublished);
 record ApprovalDto(bool IsApproved);
 
 
+record VehicleEditDto(string Make,string Model,int Year,decimal Price,decimal Cost);
