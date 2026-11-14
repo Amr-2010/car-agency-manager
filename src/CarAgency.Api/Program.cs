@@ -73,6 +73,15 @@ CREATE TABLE IF NOT EXISTS "UsedCarSubmissionPhotos" (
 );
 """);
         await database.Database.ExecuteSqlRawAsync("""ALTER TABLE "UsedCarSubmissions" ADD COLUMN IF NOT EXISTS "Location" varchar(180) NOT NULL DEFAULT '';""");
+        await database.Database.ExecuteSqlRawAsync("""
+CREATE TABLE IF NOT EXISTS "VehiclePhotos" (
+ "Id" uuid PRIMARY KEY,
+ "VehicleId" uuid NOT NULL REFERENCES "Vehicles"("Id") ON DELETE CASCADE,
+ "MimeType" varchar(30) NOT NULL,
+ "ImageData" bytea NOT NULL,
+ "SortOrder" integer NOT NULL DEFAULT 0
+);
+""");
         app.Logger.LogInformation("Car Agency database schema verified.");
     }
     catch (Exception ex)
@@ -126,6 +135,23 @@ app.MapGet("/api/public/vehicles/{id:guid}",async (Guid id,CarDb db)=>{
  var v=await db.Vehicles.AsNoTracking().Where(v=>v.Id==id&&v.IsPublished&&v.IsApproved&&v.Status=="Available")
  .Select(v=>new {v.Id,v.Make,v.Model,v.Year,v.Price,v.ImageUrl,v.BranchId}).FirstOrDefaultAsync();
  return v==null?Results.NotFound():Results.Ok(v);
+});
+app.MapGet("/api/public/vehicles/{id:guid}/photos/{photoId:guid}",async (Guid id,Guid photoId,CarDb db)=>{
+ if(!await db.Vehicles.AnyAsync(v=>v.Id==id&&v.IsApproved&&v.IsPublished&&v.Status=="Available"))return Results.NotFound();
+ await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
+ await using var cmd=conn.CreateCommand();
+ cmd.CommandText="""SELECT "MimeType","ImageData" FROM "VehiclePhotos" WHERE "Id"=@photo AND "VehicleId"=@vehicle""";
+ foreach(var (n,v) in new[]{("photo",photoId),("vehicle",id)}){var p=cmd.CreateParameter();p.ParameterName=n;p.Value=v;cmd.Parameters.Add(p);}
+ await using var reader=await cmd.ExecuteReaderAsync();
+ return await reader.ReadAsync()?Results.File((byte[])reader.GetValue(1),reader.GetString(0)):Results.NotFound();
+});
+app.MapGet("/api/public/vehicles/{id:guid}/photos",async (Guid id,CarDb db)=>{
+ if(!await db.Vehicles.AnyAsync(v=>v.Id==id&&v.IsApproved&&v.IsPublished&&v.Status=="Available"))return Results.NotFound();
+ var ids=new List<Guid>();await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
+ await using var cmd=conn.CreateCommand();cmd.CommandText="""SELECT "Id" FROM "VehiclePhotos" WHERE "VehicleId"=@id ORDER BY "SortOrder" LIMIT 8""";
+ var p=cmd.CreateParameter();p.ParameterName="id";p.Value=id;cmd.Parameters.Add(p);
+ await using var reader=await cmd.ExecuteReaderAsync();while(await reader.ReadAsync())ids.Add(reader.GetGuid(0));
+ return Results.Ok(ids.Select(photoId=>"/api/public/vehicles/"+id+"/photos/"+photoId));
 });
 app.MapPost("/api/auth/login",async (LoginDto dto,CarDb db,PasswordHasher<AppUser> hasher)=>{
  var u=await db.Users.FirstOrDefaultAsync(x=>x.Username==dto.Username);
@@ -264,6 +290,28 @@ api.MapGet("/admin/vehicles-all",async (ClaimsPrincipal user,CarDb db)=>{
  var role=user.FindFirst(ClaimTypes.Role)?.Value;var a=Guid.Parse(user.FindFirst("agency_id")!.Value);
  return await db.Vehicles.AsNoTracking().Where(v=>role=="SuperAdmin"||v.AgencyId==a).OrderByDescending(v=>v.Year).Take(500).ToListAsync();
 }).RequireAuthorization("AdminOnly");
+api.MapPost("/vehicles/{id:guid}/photos",async (Guid id,HttpRequest request,ClaimsPrincipal user,CarDb db)=>{
+ var agency=Guid.Parse(user.FindFirst("agency_id")!.Value);
+ if(!await db.Vehicles.AnyAsync(v=>v.Id==id&&(user.IsInRole("SuperAdmin")||v.AgencyId==agency)))return Results.NotFound();
+ if(!request.HasFormContentType)return Results.BadRequest(new{error="multipart/form-data required"});
+ var form=await request.ReadFormAsync();var photos=form.Files.GetFiles("photos");
+ if(photos.Count is < 1 or > 8||photos.Any(p=>p.Length is < 12 or > 3000000||!new[]{"image/jpeg","image/png","image/webp"}.Contains(p.ContentType.ToLowerInvariant())))return Results.BadRequest(new{error="Choose 1-8 JPG/PNG/WebP photos, maximum 3MB each"});
+ var files=new List<(string Mime,byte[] Data)>();
+ foreach(var file in photos){await using var stream=new MemoryStream();await file.CopyToAsync(stream);var bytes=stream.ToArray();
+ var valid=file.ContentType.ToLowerInvariant() switch {
+ "image/jpeg"=>bytes[0]==255&&bytes[1]==216,
+ "image/png"=>bytes[0]==137&&bytes[1]==80&&bytes[2]==78&&bytes[3]==71,
+ "image/webp"=>bytes[0]==82&&bytes[1]==73&&bytes[2]==70&&bytes[3]==70&&bytes[8]==87&&bytes[9]==69&&bytes[10]==66&&bytes[11]==80,
+ _=>false};
+ if(!valid)return Results.BadRequest(new{error="Invalid image data"});files.Add((file.ContentType.ToLowerInvariant(),bytes));}
+ await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();await using var tx=await conn.BeginTransactionAsync();
+ try{
+ await using(var del=conn.CreateCommand()){del.Transaction=tx;del.CommandText="""DELETE FROM "VehiclePhotos" WHERE "VehicleId"=@id""";var p=del.CreateParameter();p.ParameterName="id";p.Value=id;del.Parameters.Add(p);await del.ExecuteNonQueryAsync();}
+ for(var i=0;i<files.Count;i++){await using var cmd=conn.CreateCommand();cmd.Transaction=tx;cmd.CommandText="""INSERT INTO "VehiclePhotos" ("Id","VehicleId","MimeType","ImageData","SortOrder") VALUES (@id,@vehicle,@mime,@data,@sort)""";
+ foreach(var (n,v) in new (string,object)[]{("id",Guid.NewGuid()),("vehicle",id),("mime",files[i].Mime),("data",files[i].Data),("sort",i)}){var p=cmd.CreateParameter();p.ParameterName=n;p.Value=v;cmd.Parameters.Add(p);}await cmd.ExecuteNonQueryAsync();}
+ await tx.CommitAsync();return Results.Ok(new{vehicleId=id,count=files.Count});
+ }catch{await tx.RollbackAsync();throw;}
+}).DisableAntiforgery().RequireAuthorization("AdminOnly");
 api.MapGet("/customers",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);return await db.Customers.Where(x=>x.AgencyId==a).ToListAsync();});
 api.MapPost("/customers",async (CustomerDto dto,ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);var c=new Customer{AgencyId=a,FullName=dto.FullName,Phone=dto.Phone};db.Customers.Add(c);await db.SaveChangesAsync();return Results.Created($"/api/customers/{c.Id}",c);});
 app.Run();
