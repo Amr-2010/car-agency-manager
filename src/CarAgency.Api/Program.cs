@@ -203,10 +203,18 @@ app.MapGet("/api/admin/used-submissions/{submissionId:guid}/photos/{photoId:guid
 app.MapGet("/api/admin/used-submissions",async (CarDb db)=>{
  var rows=new List<object>();
  await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
- await using var cmd=conn.CreateCommand();cmd.CommandText="""SELECT "Id","Name","Phone","Make","Year","Price","Description","Status","CreatedAt" FROM "UsedCarSubmissions" ORDER BY "CreatedAt" DESC LIMIT 200""";
+ await using var cmd=conn.CreateCommand();cmd.CommandText="""SELECT "Id","Name","Phone","Make","Year","Price","Description","Status","CreatedAt","Location","BodyType" FROM "UsedCarSubmissions" ORDER BY "CreatedAt" DESC LIMIT 200""";
  await using var reader=await cmd.ExecuteReaderAsync();
- while(await reader.ReadAsync())rows.Add(new {id=reader.GetGuid(0),name=reader.GetString(1),phone=reader.GetString(2),make=reader.GetString(3),year=reader.GetInt32(4),price=reader.GetDecimal(5),description=reader.GetString(6),status=reader.GetString(7),createdAt=reader.GetDateTime(8)});
+ while(await reader.ReadAsync())rows.Add(new{id=reader.GetGuid(0),name=reader.GetString(1),phone=reader.GetString(2),make=reader.GetString(3),year=reader.GetInt32(4),price=reader.GetDecimal(5),description=reader.GetString(6),status=reader.GetString(7),createdAt=reader.GetDateTime(8),location=reader.GetString(9),bodyType=reader.GetString(10)});
  return Results.Ok(rows);
+}).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
+app.MapPatch("/api/admin/used-submissions/{id:guid}/status",async (Guid id,SubmissionStatusDto dto,CarDb db)=>{
+ if(!new[]{"Approved","Rejected","Pending"}.Contains(dto.Status))return Results.BadRequest();
+ await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
+ await using var cmd=conn.CreateCommand();cmd.CommandText="""UPDATE "UsedCarSubmissions" SET "Status"=@status WHERE "Id"=@id""";
+ var p=cmd.CreateParameter();p.ParameterName="status";p.Value=dto.Status;cmd.Parameters.Add(p);
+ p=cmd.CreateParameter();p.ParameterName="id";p.Value=id;cmd.Parameters.Add(p);
+ return await cmd.ExecuteNonQueryAsync()==0?Results.NotFound():Results.Ok(new{id,status=dto.Status});
 }).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
 var api=app.MapGroup("/api").RequireAuthorization("StaffOrAdmin");
 api.MapGet("/dashboard",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);return Results.Ok(new{vehicles=await db.Vehicles.CountAsync(x=>x.AgencyId==a),available=await db.Vehicles.CountAsync(x=>x.AgencyId==a&&x.Status=="Available"),customers=await db.Customers.CountAsync(x=>x.AgencyId==a),sales=await db.Sales.CountAsync(x=>x.AgencyId==a)});});
@@ -226,9 +234,42 @@ api.MapPatch("/vehicles/{id:guid}/approval",async (Guid id,ApprovalDto dto,Claim
  v.IsApproved=dto.IsApproved;await db.SaveChangesAsync();return Results.Ok(new {v.Id,v.IsPublished,v.IsApproved});
 }).RequireAuthorization("AdminOnly");
 api.MapPost("/vehicles",async (VehicleDto dto,ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);if(!await db.Branches.AnyAsync(x=>x.Id==dto.BranchId&&x.AgencyId==a))return Results.BadRequest("Invalid branch");if(dto.Year<1900||dto.Price<0||string.IsNullOrWhiteSpace(dto.Vin))return Results.BadRequest("Invalid vehicle");var v=new Vehicle{AgencyId=a,BranchId=dto.BranchId,Vin=dto.Vin.Trim(),Make=dto.Make,Model=dto.Model,Year=dto.Year,Cost=dto.Cost,Price=dto.Price};db.Vehicles.Add(v);await db.SaveChangesAsync();return Results.Created($"/api/vehicles/{v.Id}",v);}).RequireAuthorization("AdminOnly");
+// Super administrators can manage all agencies; ordinary managers remain agency-scoped.
+api.MapGet("/branches",async (ClaimsPrincipal user,CarDb db)=>{
+ var role=user.FindFirst(ClaimTypes.Role)?.Value;var a=Guid.Parse(user.FindFirst("agency_id")!.Value);
+ return await db.Branches.AsNoTracking().Where(b=>role=="SuperAdmin"||b.AgencyId==a).OrderBy(b=>b.Name).Select(b=>new{b.Id,b.AgencyId,b.Name}).ToListAsync();
+});
+api.MapPost("/branches",async (BranchDto dto,ClaimsPrincipal user,CarDb db)=>{
+ var role=user.FindFirst(ClaimTypes.Role)?.Value;var a=Guid.Parse(user.FindFirst("agency_id")!.Value);
+ var target=role=="SuperAdmin"&&dto.AgencyId.HasValue?dto.AgencyId.Value:a;
+ if(!await db.Agencies.AnyAsync(x=>x.Id==target)||string.IsNullOrWhiteSpace(dto.Name)||dto.Name.Length>100)return Results.BadRequest();
+ var branch=new Branch{AgencyId=target,Name=dto.Name.Trim()};db.Branches.Add(branch);await db.SaveChangesAsync();return Results.Created("/api/branches",new{branch.Id,branch.AgencyId,branch.Name});
+}).RequireAuthorization("AdminOnly");
+api.MapGet("/agencies",async (ClaimsPrincipal user,CarDb db)=>{
+ var role=user.FindFirst(ClaimTypes.Role)?.Value;var a=Guid.Parse(user.FindFirst("agency_id")!.Value);
+ return await db.Agencies.AsNoTracking().Where(x=>role=="SuperAdmin"||x.Id==a).Select(x=>new{x.Id,x.Name}).ToListAsync();
+}).RequireAuthorization("AdminOnly");
+api.MapPost("/agencies",async (AgencyDto dto,CarDb db)=>{
+ if(string.IsNullOrWhiteSpace(dto.Name)||dto.Name.Length>120)return Results.BadRequest();
+ var a=new Agency{Name=dto.Name.Trim()};db.Agencies.Add(a);await db.SaveChangesAsync();return Results.Created("/api/agencies",new{a.Id,a.Name});
+}).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
+api.MapDelete("/vehicles/{id:guid}",async (Guid id,ClaimsPrincipal user,CarDb db)=>{
+ var role=user.FindFirst(ClaimTypes.Role)?.Value;var agency=Guid.Parse(user.FindFirst("agency_id")!.Value);
+ var v=await db.Vehicles.FirstOrDefaultAsync(x=>x.Id==id&&(role=="SuperAdmin"||x.AgencyId==agency));
+ if(v==null)return Results.NotFound();
+ if(await db.Sales.AnyAsync(x=>x.VehicleId==id))return Results.Conflict(new{error="Vehicle has sales records; archive it instead"});
+ db.Vehicles.Remove(v);await db.SaveChangesAsync();return Results.NoContent();
+}).RequireAuthorization("AdminOnly");
+api.MapGet("/admin/vehicles-all",async (ClaimsPrincipal user,CarDb db)=>{
+ var role=user.FindFirst(ClaimTypes.Role)?.Value;var a=Guid.Parse(user.FindFirst("agency_id")!.Value);
+ return await db.Vehicles.AsNoTracking().Where(v=>role=="SuperAdmin"||v.AgencyId==a).OrderByDescending(v=>v.Year).Take(500).ToListAsync();
+}).RequireAuthorization("AdminOnly");
 api.MapGet("/customers",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);return await db.Customers.Where(x=>x.AgencyId==a).ToListAsync();});
 api.MapPost("/customers",async (CustomerDto dto,ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);var c=new Customer{AgencyId=a,FullName=dto.FullName,Phone=dto.Phone};db.Customers.Add(c);await db.SaveChangesAsync();return Results.Created($"/api/customers/{c.Id}",c);});
 app.Run();
+record SubmissionStatusDto(string Status);
+record BranchDto(string Name,Guid? AgencyId);
+record AgencyDto(string Name);
 record RegisterDto(string Username,string Password);
 record CreateUserDto(string Username,string Password,string Role);
 record LoginDto(string Username,string Password);
