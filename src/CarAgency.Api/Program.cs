@@ -158,11 +158,11 @@ app.MapGet("/api/public/vehicles",async (CarDb db,string? make,int page=1,int pa
  var q=db.Vehicles.AsNoTracking().Where(v=>v.IsPublished&&v.IsApproved&&v.Status=="Available");
  if(!string.IsNullOrWhiteSpace(make))q=q.Where(v=>v.Make==make);
  return Results.Ok(await q.OrderByDescending(v=>v.Year).ThenBy(v=>v.Id).Skip((page-1)*pageSize).Take(pageSize)
- .Select(v=>new {v.Id,v.Make,v.Model,v.Year,v.Price,v.ImageUrl,v.BranchId}).ToListAsync());
+ .Select(v=>new {v.Id,v.Make,v.Model,v.Year,v.Price,v.ImageUrl,v.BranchId,IsDemo=v.Vin.StartsWith("DEMO-CA-")}).ToListAsync());
 });
 app.MapGet("/api/public/vehicles/{id:guid}",async (Guid id,CarDb db)=>{
  var v=await db.Vehicles.AsNoTracking().Where(v=>v.Id==id&&v.IsPublished&&v.IsApproved&&v.Status=="Available")
- .Select(v=>new {v.Id,v.Make,v.Model,v.Year,v.Price,v.ImageUrl,v.BranchId}).FirstOrDefaultAsync();
+ .Select(v=>new {v.Id,v.Make,v.Model,v.Year,v.Price,v.ImageUrl,v.BranchId,IsDemo=v.Vin.StartsWith("DEMO-CA-")}).FirstOrDefaultAsync();
  return v==null?Results.NotFound():Results.Ok(v);
 });
 app.MapGet("/api/public/vehicles/{id:guid}/photos/{photoId:guid}",async (Guid id,Guid photoId,CarDb db)=>{
