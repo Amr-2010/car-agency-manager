@@ -1,4 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 using System.Security.Claims;
 using System.Text;
 using CarAgency.Api;
@@ -118,7 +120,7 @@ app.MapGet("/api/admin/used-submissions",async (CarDb db)=>{
  await using var reader=await cmd.ExecuteReaderAsync();
  while(await reader.ReadAsync())rows.Add(new {id=reader.GetGuid(0),name=reader.GetString(1),phone=reader.GetString(2),make=reader.GetString(3),year=reader.GetInt32(4),price=reader.GetDecimal(5),description=reader.GetString(6),status=reader.GetString(7),createdAt=reader.GetDateTime(8)});
  return Results.Ok(rows);
-}).RequireAuthorization("AdminOnly");
+}).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
 var api=app.MapGroup("/api").RequireAuthorization("StaffOrAdmin");
 api.MapGet("/dashboard",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);return Results.Ok(new{vehicles=await db.Vehicles.CountAsync(x=>x.AgencyId==a),available=await db.Vehicles.CountAsync(x=>x.AgencyId==a&&x.Status=="Available"),customers=await db.Customers.CountAsync(x=>x.AgencyId==a),sales=await db.Sales.CountAsync(x=>x.AgencyId==a)});});
 api.MapGet("/vehicles",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);return await db.Vehicles.Where(x=>x.AgencyId==a).OrderBy(x=>x.Make).ToListAsync();});
