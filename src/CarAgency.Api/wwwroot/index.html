@@ -25,6 +25,23 @@
   html{scroll-padding-bottom:110px}
 }
  .car[role=link]{cursor:pointer}.car[role=link]:focus-visible{outline:3px solid #ff2149;outline-offset:3px}
+
+/* Center mobile homepage content while retaining two-column car cards */
+@media(max-width:700px){
+ .slideCopy{left:8%;right:8%;top:50%;transform:translateY(-50%);max-width:none;text-align:center;display:flex;flex-direction:column;align-items:center}
+ .slideCopy h1{font-size:clamp(30px,8vw,42px);text-align:center;line-height:1.35}
+ .slideCopy p{font-size:15px;text-align:center;max-width:320px}
+ .slideCopy .primary,.slideCopy .secondary{margin-inline:auto}
+ .features .feature,.feature{text-align:center;align-items:center;justify-content:center}
+ .sectionHead{flex-direction:column;align-items:center;text-align:center;justify-content:center}
+ .sectionHead h2,.sectionHead p{text-align:center}
+ .carBody{text-align:center}
+ .carBody .foot{justify-content:center}
+ .sell{text-align:center}
+ .sell h2,.sell p{text-align:center}
+ .searchbox{text-align:center}
+ .searchbox input,.searchbox select{text-align:center;text-align-last:center}
+}
 </style></head>
 <body><script>
 (function(){
