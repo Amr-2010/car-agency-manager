@@ -48,6 +48,18 @@ using (var scope = app.Services.CreateScope())
     try
     {
         await database.Database.EnsureCreatedAsync();
+        await database.Database.ExecuteSqlRawAsync("""
+CREATE TABLE IF NOT EXISTS "FeaturedAds" (
+ "Id" uuid PRIMARY KEY,
+ "Title" varchar(120) NOT NULL,
+ "Subtitle" varchar(240) NOT NULL DEFAULT '',
+ "ImageUrl" varchar(1000) NOT NULL,
+ "TargetUrl" varchar(1000) NOT NULL DEFAULT '',
+ "SortOrder" integer NOT NULL DEFAULT 0,
+ "IsActive" boolean NOT NULL DEFAULT true,
+ "CreatedAt" timestamptz NOT NULL DEFAULT now()
+);
+""");
         await database.Database.ExecuteSqlRawAsync("""ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "CreatedAt" timestamptz NOT NULL DEFAULT now();""");
         await database.Database.ExecuteSqlRawAsync("""ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "BodyType" varchar(40) NOT NULL DEFAULT 'Other';""");
         await database.Database.ExecuteSqlRawAsync("""
@@ -155,6 +167,34 @@ app.MapGet("/health/database", async (CarDb db) =>
         return Results.Problem("Database connection failed", statusCode: 503);
     }
 });
+
+app.MapGet("/api/public/featured-ads",async (CarDb db)=>{
+ var rows=new List<object>();await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
+ await using var cmd=conn.CreateCommand();cmd.CommandText="""SELECT "Id","Title","Subtitle","ImageUrl","TargetUrl" FROM "FeaturedAds" WHERE "IsActive"=true ORDER BY "SortOrder","CreatedAt" DESC LIMIT 12""";
+ await using var reader=await cmd.ExecuteReaderAsync();while(await reader.ReadAsync())rows.Add(new{id=reader.GetGuid(0),title=reader.GetString(1),subtitle=reader.GetString(2),imageUrl=reader.GetString(3),targetUrl=reader.GetString(4)});return Results.Ok(rows);
+});
+app.MapGet("/api/admin/featured-ads",async (CarDb db)=>{
+ var rows=new List<object>();await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
+ await using var cmd=conn.CreateCommand();cmd.CommandText="""SELECT "Id","Title","Subtitle","ImageUrl","TargetUrl","SortOrder","IsActive" FROM "FeaturedAds" ORDER BY "SortOrder","CreatedAt" DESC""";
+ await using var reader=await cmd.ExecuteReaderAsync();while(await reader.ReadAsync())rows.Add(new{id=reader.GetGuid(0),title=reader.GetString(1),subtitle=reader.GetString(2),imageUrl=reader.GetString(3),targetUrl=reader.GetString(4),sortOrder=reader.GetInt32(5),isActive=reader.GetBoolean(6)});return Results.Ok(rows);
+}).RequireAuthorization("AdminOnly");
+app.MapPost("/api/admin/featured-ads",async (FeaturedAdDto dto,CarDb db)=>{
+ if(!ValidFeatured(dto))return Results.BadRequest(new{error="Invalid ad fields or URLs"});
+ var id=Guid.NewGuid();await db.Database.ExecuteSqlInterpolatedAsync($"""INSERT INTO "FeaturedAds" ("Id","Title","Subtitle","ImageUrl","TargetUrl","SortOrder","IsActive") VALUES ({id},{dto.Title.Trim()},{dto.Subtitle.Trim()},{dto.ImageUrl.Trim()},{dto.TargetUrl.Trim()},{dto.SortOrder},{dto.IsActive})""");
+ return Results.Created("/api/admin/featured-ads/"+id,new{id});
+}).RequireAuthorization("AdminOnly");
+app.MapPut("/api/admin/featured-ads/{id:guid}",async (Guid id,FeaturedAdDto dto,CarDb db)=>{
+ if(!ValidFeatured(dto))return Results.BadRequest(new{error="Invalid ad fields or URLs"});
+ var count=await db.Database.ExecuteSqlInterpolatedAsync($"""UPDATE "FeaturedAds" SET "Title"={dto.Title.Trim()},"Subtitle"={dto.Subtitle.Trim()},"ImageUrl"={dto.ImageUrl.Trim()},"TargetUrl"={dto.TargetUrl.Trim()},"SortOrder"={dto.SortOrder},"IsActive"={dto.IsActive} WHERE "Id"={id}""");
+ return count==0?Results.NotFound():Results.Ok(new{id});
+}).RequireAuthorization("AdminOnly");
+app.MapDelete("/api/admin/featured-ads/{id:guid}",async (Guid id,CarDb db)=>{
+ var count=await db.Database.ExecuteSqlInterpolatedAsync($"""DELETE FROM "FeaturedAds" WHERE "Id"={id}""");return count==0?Results.NotFound():Results.NoContent();
+}).RequireAuthorization("AdminOnly");
+static bool ValidFeatured(FeaturedAdDto d){
+ static bool SafeUrl(string s)=>Uri.TryCreate(s,UriKind.Absolute,out var u)&&(u.Scheme=="https"||u.Scheme=="http")&&u.UserInfo.Length==0;
+ return !string.IsNullOrWhiteSpace(d.Title)&&d.Title.Length<=120&&d.Subtitle.Length<=240&&d.ImageUrl.Length<=1000&&SafeUrl(d.ImageUrl)&&d.TargetUrl.Length<=1000&&(string.IsNullOrWhiteSpace(d.TargetUrl)||SafeUrl(d.TargetUrl))&&d.SortOrder>=0&&d.SortOrder<=10000;
+}
 // Public catalog: no credentials, no cost, VIN, customer or internal data.
 app.MapGet("/api/public/vehicles",async (CarDb db,string? make,int page=1,int pageSize=12)=>{
  page=Math.Max(1,page);pageSize=Math.Clamp(pageSize,1,48);
@@ -475,3 +515,5 @@ record ApprovalDto(bool IsApproved);
 record VehicleEditDto(string Make,string Model,int Year,decimal Price,decimal Cost);
 
 record UserManageDto(string Username,string Role,string? Password);
+
+record FeaturedAdDto(string Title,string Subtitle,string ImageUrl,string TargetUrl,int SortOrder,bool IsActive);
