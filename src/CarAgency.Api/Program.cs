@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS "FeaturedAds" (
  "CreatedAt" timestamptz NOT NULL DEFAULT now()
 );
 """);
+        await database.Database.ExecuteSqlRawAsync("""
+CREATE TABLE IF NOT EXISTS "FeaturedAdImages" (
+ "AdId" uuid PRIMARY KEY REFERENCES "FeaturedAds"("Id") ON DELETE CASCADE,
+ "MimeType" varchar(30) NOT NULL,
+ "ImageData" bytea NOT NULL
+);
+""");
         await database.Database.ExecuteSqlRawAsync("""ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "CreatedAt" timestamptz NOT NULL DEFAULT now();""");
         await database.Database.ExecuteSqlRawAsync("""ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "BodyType" varchar(40) NOT NULL DEFAULT 'Other';""");
         await database.Database.ExecuteSqlRawAsync("""
@@ -168,6 +175,25 @@ app.MapGet("/health/database", async (CarDb db) =>
     }
 });
 
+
+app.MapGet("/api/public/featured-ads/{id:guid}/image",async (Guid id,CarDb db)=>{
+ await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();await using var cmd=conn.CreateCommand();
+ cmd.CommandText="""SELECT i."MimeType",i."ImageData" FROM "FeaturedAdImages" i JOIN "FeaturedAds" a ON a."Id"=i."AdId" WHERE i."AdId"=@id AND a."IsActive"=true""";
+ var param=cmd.CreateParameter();param.ParameterName="id";param.Value=id;cmd.Parameters.Add(param);
+ await using var reader=await cmd.ExecuteReaderAsync();if(!await reader.ReadAsync())return Results.NotFound();
+ return Results.File((byte[])reader.GetValue(1),reader.GetString(0));
+});
+app.MapPost("/api/admin/featured-ads/{id:guid}/image",async (Guid id,HttpRequest request,CarDb db)=>{
+ if(!request.HasFormContentType)return Results.BadRequest(new{error="Select an image"});
+ var form=await request.ReadFormAsync();var file=form.Files.GetFile("image");
+ if(file==null||file.Length==0||file.Length>3_000_000||!new[]{"image/jpeg","image/png","image/webp"}.Contains(file.ContentType.ToLowerInvariant()))return Results.BadRequest(new{error="JPEG, PNG or WebP only, maximum 3MB"});
+ if(!await db.Database.SqlQueryRaw<int>($"""SELECT 1 AS "Value" FROM "FeaturedAds" WHERE "Id"={id}""").AnyAsync())return Results.NotFound();
+ await using var stream=new MemoryStream();await file.CopyToAsync(stream);var bytes=stream.ToArray();
+ await db.Database.ExecuteSqlInterpolatedAsync($"""INSERT INTO "FeaturedAdImages" ("AdId","MimeType","ImageData") VALUES ({id},{file.ContentType.ToLowerInvariant()},{bytes}) ON CONFLICT ("AdId") DO UPDATE SET "MimeType"=EXCLUDED."MimeType","ImageData"=EXCLUDED."ImageData" """);
+ await db.Database.ExecuteSqlInterpolatedAsync($"""UPDATE "FeaturedAds" SET "ImageUrl"={"/api/public/featured-ads/"+id+"/image"} WHERE "Id"={id}""");
+ return Results.Ok(new{imageUrl="/api/public/featured-ads/"+id+"/image"});
+}).RequireAuthorization("AdminOnly");
+
 app.MapGet("/api/public/featured-ads",async (CarDb db)=>{
  var rows=new List<object>();await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
  await using var cmd=conn.CreateCommand();cmd.CommandText="""SELECT "Id","Title","Subtitle","ImageUrl","TargetUrl" FROM "FeaturedAds" WHERE "IsActive"=true ORDER BY "SortOrder","CreatedAt" DESC LIMIT 12""";
@@ -193,7 +219,7 @@ app.MapDelete("/api/admin/featured-ads/{id:guid}",async (Guid id,CarDb db)=>{
 }).RequireAuthorization("AdminOnly");
 static bool ValidFeatured(FeaturedAdDto d){
  static bool SafeUrl(string s)=>Uri.TryCreate(s,UriKind.Absolute,out var u)&&(u.Scheme=="https"||u.Scheme=="http")&&u.UserInfo.Length==0;
- return !string.IsNullOrWhiteSpace(d.Title)&&d.Title.Length<=120&&d.Subtitle.Length<=240&&d.ImageUrl.Length<=1000&&SafeUrl(d.ImageUrl)&&d.TargetUrl.Length<=1000&&(string.IsNullOrWhiteSpace(d.TargetUrl)||SafeUrl(d.TargetUrl))&&d.SortOrder>=0&&d.SortOrder<=10000;
+ return !string.IsNullOrWhiteSpace(d.Title)&&d.Title.Length<=120&&d.Subtitle.Length<=240&&d.ImageUrl.Length<=1000&&(SafeUrl(d.ImageUrl)||d.ImageUrl=="/api/public/featured-ads/placeholder")&&d.TargetUrl.Length<=1000&&(string.IsNullOrWhiteSpace(d.TargetUrl)||SafeUrl(d.TargetUrl))&&d.SortOrder>=0&&d.SortOrder<=10000;
 }
 // Public catalog: no credentials, no cost, VIN, customer or internal data.
 app.MapGet("/api/public/vehicles",async (CarDb db,string? make,int page=1,int pageSize=12)=>{
