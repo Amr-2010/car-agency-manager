@@ -1,0 +1,72 @@
+@page "/used-cars"
+@using System.Net.Http.Json
+@inject IHttpClientFactory Clients
+
+<PageTitle>السيارات المستعملة | Car Agency</PageTitle>
+<section class="used-cars-page" dir="rtl">
+    <header class="used-page-header">
+        <div>
+            <h1>جميع السيارات المستعملة</h1>
+            <p>تصفح السيارات المعتمدة والمنشورة</p>
+        </div>
+        <a class="used-back" href="/">العودة للرئيسية</a>
+    </header>
+    @if (cars is null)
+    {
+        <p>جارٍ تحميل السيارات...</p>
+    }
+    else if (loadError)
+    {
+        <p role="alert">تعذر تحميل السيارات حاليًا. يرجى المحاولة لاحقًا.</p>
+    }
+    else if (cars.Count == 0)
+    {
+        <p>لا توجد سيارات منشورة حاليًا.</p>
+    }
+    else
+    {
+        <p>عدد السيارات: @cars.Count</p>
+        <div class="used-page-grid">
+            @foreach (var car in cars)
+            {
+                <article class="used-page-card" @key="car.Id">
+                    <h3>@car.Make @car.Model</h3>
+                    <p>موديل @car.Year</p>
+                    <strong>@car.Price.ToString("N0") ج.م</strong>
+                </article>
+            }
+        </div>
+    }
+</section>
+<style>
+.used-cars-page{background:#090c13;color:#fff;padding:30px 24px;min-height:70vh}
+.used-page-header{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:26px}
+.used-page-header h1{margin:0 0 10px}
+.used-page-header p{color:#aeb9cc;margin:0}
+.used-back{color:white;background:#d6002c;border-radius:10px;padding:12px 22px;text-decoration:none}
+.used-page-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;margin-top:22px}
+.used-page-card{background:#171b25;border:1px solid #343a47;border-radius:16px;padding:24px;min-width:0}
+.used-page-card h3{margin:0 0 12px}
+.used-page-card p{color:#aeb9cc}
+.used-page-card strong{color:#ff1744;font-size:1.3rem}
+@media(max-width:800px){.used-page-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.used-page-grid{grid-template-columns:1fr}}
+</style>
+@code {
+    private List<CarItem>? cars;
+    private bool loadError;
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            cars = await Clients.CreateClient("catalog")
+                .GetFromJsonAsync<List<CarItem>>("/api/public/vehicles") ?? new();
+        }
+        catch
+        {
+            loadError = true;
+            cars = new();
+        }
+    }
+    public record CarItem(Guid Id, string Make, string Model, int Year, decimal Price);
+}
