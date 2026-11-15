@@ -36,7 +36,7 @@
         </div>
         @if (visibleCount < cars.Count)
         {
-            <div class="used-more"><button type="button" @onclick="ShowMore">عرض المزيد (More)</button></div>
+            <div class="used-more"><a href="/used-cars">عرض جميع السيارات (More)</a></div>
         }
     }
 </section>
@@ -53,8 +53,8 @@
 .used-card p{color:#aeb9cc}
 .used-card strong{color:#ff1744;font-size:1.35rem}
 .used-more{text-align:center;margin:28px 0 4px}
-.used-more button{background:#e6002e;color:#fff;border:0;border-radius:12px;padding:13px 36px;cursor:pointer;font-weight:700}
-.used-more button:hover{background:#ff1744}
+.used-more a{display:inline-block;text-decoration:none;background:#e6002e;color:#fff;border:0;border-radius:12px;padding:13px 36px;cursor:pointer;font-weight:700}
+.used-more a:hover{background:#ff1744}
 @media(max-width:800px){.used-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.used-grid{grid-template-columns:1fr}}
 </style>
@@ -63,7 +63,6 @@
     private List<CarItem>? cars;
     private int visibleCount = 6;
     private bool loadError;
-    private void ShowMore() => visibleCount = Math.Min(visibleCount + 6, cars?.Count ?? 0);
 
     protected override async Task OnInitializedAsync()
     {
