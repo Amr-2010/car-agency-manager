@@ -187,7 +187,7 @@ app.MapPost("/api/admin/featured-ads/{id:guid}/image",async (Guid id,HttpRequest
  if(!request.HasFormContentType)return Results.BadRequest(new{error="Select an image"});
  var form=await request.ReadFormAsync();var file=form.Files.GetFile("image");
  if(file==null||file.Length==0||file.Length>3_000_000||!new[]{"image/jpeg","image/png","image/webp"}.Contains(file.ContentType.ToLowerInvariant()))return Results.BadRequest(new{error="JPEG, PNG or WebP only, maximum 3MB"});
- if(!await db.Database.SqlQueryRaw<int>($"""SELECT 1 AS "Value" FROM "FeaturedAds" WHERE "Id"={id}""").AnyAsync())return Results.NotFound();
+ if(!await db.Database.SqlQuery<int>($"""SELECT 1 AS "Value" FROM "FeaturedAds" WHERE "Id"={id}""").AnyAsync())return Results.NotFound();
  await using var stream=new MemoryStream();await file.CopyToAsync(stream);var bytes=stream.ToArray();
  await db.Database.ExecuteSqlInterpolatedAsync($"""INSERT INTO "FeaturedAdImages" ("AdId","MimeType","ImageData") VALUES ({id},{file.ContentType.ToLowerInvariant()},{bytes}) ON CONFLICT ("AdId") DO UPDATE SET "MimeType"=EXCLUDED."MimeType","ImageData"=EXCLUDED."ImageData" """);
  await db.Database.ExecuteSqlInterpolatedAsync($"""UPDATE "FeaturedAds" SET "ImageUrl"={"/api/public/featured-ads/"+id+"/image"} WHERE "Id"={id}""");
