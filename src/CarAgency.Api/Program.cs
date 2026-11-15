@@ -274,6 +274,7 @@ app.MapDelete("/api/admin/users/{id:guid}",async (Guid id,ClaimsPrincipal caller
  if(user.Role=="SuperAdmin"||(!super&&user.Role=="AgencyAdmin")||caller.FindFirst(ClaimTypes.NameIdentifier)?.Value==id.ToString())return Results.Forbid();
  db.Users.Remove(user);await db.SaveChangesAsync();return Results.NoContent();
 }).RequireAuthorization("AdminOnly");
+var api=app.MapGroup("/api").RequireAuthorization("StaffOrAdmin");
 api.MapPut("/agencies/{id:guid}",async (Guid id,AgencyDto dto,CarDb db)=>{
  var a=await db.Agencies.FindAsync(id);if(a==null)return Results.NotFound();
  if(string.IsNullOrWhiteSpace(dto.Name)||dto.Name.Length>120)return Results.BadRequest();a.Name=dto.Name.Trim();await db.SaveChangesAsync();return Results.Ok(new{a.Id,a.Name});
@@ -399,7 +400,6 @@ app.MapPatch("/api/admin/used-submissions/{id:guid}/status",async (Guid id,Submi
  }
  return Results.Ok(new{id,status=dto.Status,emailSent=notified});
 }).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
-var api=app.MapGroup("/api").RequireAuthorization("StaffOrAdmin");
 api.MapGet("/dashboard",async (ClaimsPrincipal user,CarDb db)=>{var a=Guid.Parse(user.FindFirst("agency_id")!.Value);var all=user.IsInRole("SuperAdmin");return Results.Ok(new{vehicles=await db.Vehicles.CountAsync(x=>all||x.AgencyId==a),available=await db.Vehicles.CountAsync(x=>(all||x.AgencyId==a)&&x.Status=="Available"),customers=await db.Customers.CountAsync(x=>all||x.AgencyId==a),sales=await db.Sales.CountAsync(x=>all||x.AgencyId==a)});});
 api.MapGet("/vehicles/{id:guid}/photos",async (Guid id,ClaimsPrincipal user,CarDb db)=>{
  var agency=Guid.Parse(user.FindFirst("agency_id")!.Value);
