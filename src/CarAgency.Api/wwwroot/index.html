@@ -43,6 +43,28 @@
  .searchbox input,.searchbox select{text-align:center;text-align-last:center}
 }
 @media(max-width:700px){#latest,#cheap,#premium,#used,#sell{scroll-margin-top:1cm}.navlinks a{scroll-margin-top:0}}
+
+/* Premium 3D depth and mobile navigation refinements */
+:root{--depth-shadow:0 14px 28px #0008,0 3px 9px #0006;--depth-edge:inset 0 1px 0 #ffffff16}
+.feature,.car,.sell,.searchbox,.loginDialog{box-shadow:var(--depth-shadow),var(--depth-edge);transform-style:preserve-3d;transition:transform .25s ease,box-shadow .25s ease,border-color .25s ease}
+.feature:hover,.car:hover{transform:perspective(900px) translateY(-5px) rotateX(1deg);box-shadow:0 20px 35px #000a,0 0 18px #ed18332b,var(--depth-edge)}
+.primary,.secondary,.outline,.navlinks a.active{box-shadow:0 5px 0 #780b1a,0 11px 18px #0006,inset 0 1px 0 #ffffff36;transition:transform .18s,box-shadow .18s}
+.primary:active,.secondary:active,.outline:active,.navlinks a.active:active{transform:translateY(3px);box-shadow:0 2px 0 #780b1a,0 4px 9px #0007}
+.photo img{transition:transform .4s ease}.car:hover .photo img{transform:scale(1.035)}
+@media(max-width:700px){
+ body{padding-top:1cm;padding-bottom:calc(1cm + 102px)}
+ header.nav{min-height:84px;padding:12px 12px max(12px,env(safe-area-inset-bottom));gap:0;box-shadow:0 -9px 30px #000c,inset 0 1px 0 #ffffff22}
+ header.nav .navlinks{gap:10px;scrollbar-width:none}
+ header.nav .navlinks::-webkit-scrollbar{display:none}
+ header.nav .navlinks a{font-size:13px;font-weight:750;padding:13px 12px;border-radius:12px;white-space:nowrap;background:linear-gradient(155deg,#202633,#10141e);border:1px solid #343c4b;box-shadow:0 4px 8px #0008,inset 0 1px 0 #ffffff1c}
+ header.nav .navlinks a.active{background:linear-gradient(145deg,#ff2143,#c90026);border-color:#fa3451}
+ header.nav .accountActions{position:fixed;top:calc(env(safe-area-inset-top) + 5px);left:12px;right:auto;z-index:9500;display:flex;gap:7px;max-width:58vw}
+ header.nav .accountActions button{font-size:12px;max-width:160px;padding:10px 12px;border-radius:13px;background:linear-gradient(150deg,#252d3b,#111722);box-shadow:0 6px 14px #0008;border:1px solid #626d7d}
+ .top{padding-left:155px;min-height:48px}
+ .feature,.car{box-shadow:0 10px 20px #0008,inset 0 1px 0 #ffffff1c}
+ .feature:active,.car:active{transform:perspective(700px) scale(.98)}
+}
+@media(prefers-reduced-motion:reduce){.feature,.car,.photo img,.primary,.secondary,.outline{transition:none!important;transform:none!important}}
 </style></head>
 <body><script>
 (function(){
@@ -56,7 +78,7 @@
   setTimeout(function(){if(document.getElementById('startupSplash'))reveal(true)},12000);
 })();
 </script><div class="startupSplash" id="startupSplash" role="status" aria-live="polite"><div class="startupInner"><img class="startupLogo" src="/icons/car-agency.svg" alt="Car Agency Auto Group"><div class="startupSpinner" aria-hidden="true"></div><p id="startupText">جارٍ الاتصال بالخدمة وتحميل السيارات...</p><button class="startupRetry" id="startupRetry" type="button" hidden>إعادة المحاولة</button></div></div><div class="top"><div class="social">● ◉ ▶ in 𝕏 ♪</div><div class="links"><span>مركز المساعدة</span><span>تواصل معنا</span><span>فروعنا ◉</span></div></div>
-<header class="nav"><a class="brand" href="/"><span class="mark">◆</span><div><strong>Car <span>Agency</span></strong><small>AUTO GROUP</small></div></a><nav class="navlinks"><a class="active" href="/">الرئيسية</a><a href="#latest">أحدث السيارات</a><a href="#cheap">الأقل سعرًا</a><a href="#premium">الأعلى سعرًا</a><a href="#used">المستعملة</a><a href="/used-cars.html">كل المستعملة</a><a href="#sell">أضف سيارتك</a></nav><div class="accountActions"><button class="outline loginTrigger" id="openLogin" type="button">♙ دخول المستخدم</button><button class="outline" id="logoutUser" type="button" hidden>تسجيل الخروج</button></div></header>
+<header class="nav"><a class="brand" href="/"><span class="mark">◆</span><div><strong>Car <span>Agency</span></strong><small>AUTO GROUP</small></div></a><nav class="navlinks"><a class="active" href="/">الرئيسية</a><a href="#latest">أحدث السيارات</a><a href="#cheap">الأقل سعرًا</a><a href="#premium">الأعلى سعرًا</a><a href="#used">المستعملة</a><a href="#sell">أضف سيارتك</a></nav><div class="accountActions"><button class="outline loginTrigger" id="openLogin" type="button">♙ دخول المستخدم</button><button class="outline" id="logoutUser" type="button" hidden>تسجيل الخروج</button></div></header>
 <section class="hero" aria-label="أحدث السيارات"><div class="slider" id="slider">
 <div class="slide current" style="--bg:url('https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?w=1600&q=85')"><div class="slideCopy"><span>CAR AGENCY COLLECTION</span><h1>اختار عربيتك<br><em>بكل ثقة</em></h1><p>تصفح أحدث السيارات الجديدة والمستعملة في مكان واحد</p><a class="primary" href="#cars">اكتشف السيارات</a></div></div>
 <div class="slide" style="--bg:url('https://images.unsplash.com/photo-1555215695-3004980ad54e?w=1600&q=85')"><div class="slideCopy"><span>NEW ARRIVALS</span><h1>أحدث الموديلات<br><em>في انتظارك</em></h1><p>اختيارات متنوعة تناسب احتياجاتك</p><a class="primary" href="#latest">شاهد الأحدث</a></div></div>
