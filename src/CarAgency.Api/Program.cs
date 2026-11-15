@@ -214,6 +214,46 @@ app.MapPost("/api/admin/users",async (CreateUserDto dto,ClaimsPrincipal principa
  user.PasswordHash=hasher.HashPassword(user,dto.Password);db.Users.Add(user);await db.SaveChangesAsync();
  return Results.Created("/api/admin/users",new {user.Id,user.Username,user.Role});
 }).RequireAuthorization("AdminOnly");
+
+app.MapPut("/api/admin/users/{id:guid}",async (Guid id,UserManageDto dto,ClaimsPrincipal caller,CarDb db,PasswordHasher<AppUser> hasher)=>{
+ var super=caller.IsInRole("SuperAdmin");var agency=Guid.Parse(caller.FindFirst("agency_id")!.Value);
+ var user=await db.Users.FirstOrDefaultAsync(x=>x.Id==id&&(super||x.AgencyId==agency));if(user==null)return Results.NotFound();
+ if(user.Role=="SuperAdmin"||dto.Role=="SuperAdmin")return Results.Forbid();
+ if(dto.Role!="Staff"&&dto.Role!="AgencyAdmin")return Results.BadRequest(new{error="Invalid role"});
+ if(!super&&(user.Role=="AgencyAdmin"||dto.Role=="AgencyAdmin"))return Results.Forbid();
+ if(string.IsNullOrWhiteSpace(dto.Username)||dto.Username.Trim().Length<3||dto.Username.Length>60)return Results.BadRequest();
+ if(await db.Users.AnyAsync(x=>x.Id!=id&&x.Username==dto.Username.Trim()))return Results.Conflict();
+ if(!string.IsNullOrEmpty(dto.Password)&&dto.Password.Length<10)return Results.BadRequest(new{error="Password must have 10 characters"});
+ user.Username=dto.Username.Trim();user.Role=dto.Role;
+ if(!string.IsNullOrEmpty(dto.Password))user.PasswordHash=hasher.HashPassword(user,dto.Password);
+ await db.SaveChangesAsync();return Results.Ok(new{user.Id,user.Username,user.Role});
+}).RequireAuthorization("AdminOnly");
+app.MapDelete("/api/admin/users/{id:guid}",async (Guid id,ClaimsPrincipal caller,CarDb db)=>{
+ var super=caller.IsInRole("SuperAdmin");var agency=Guid.Parse(caller.FindFirst("agency_id")!.Value);
+ var user=await db.Users.FirstOrDefaultAsync(x=>x.Id==id&&(super||x.AgencyId==agency));if(user==null)return Results.NotFound();
+ if(user.Role=="SuperAdmin"||(!super&&user.Role=="AgencyAdmin")||caller.FindFirst(ClaimTypes.NameIdentifier)?.Value==id.ToString())return Results.Forbid();
+ db.Users.Remove(user);await db.SaveChangesAsync();return Results.NoContent();
+}).RequireAuthorization("AdminOnly");
+api.MapPut("/agencies/{id:guid}",async (Guid id,AgencyDto dto,CarDb db)=>{
+ var a=await db.Agencies.FindAsync(id);if(a==null)return Results.NotFound();
+ if(string.IsNullOrWhiteSpace(dto.Name)||dto.Name.Length>120)return Results.BadRequest();a.Name=dto.Name.Trim();await db.SaveChangesAsync();return Results.Ok(new{a.Id,a.Name});
+}).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
+api.MapDelete("/agencies/{id:guid}",async (Guid id,CarDb db)=>{
+ var a=await db.Agencies.FindAsync(id);if(a==null)return Results.NotFound();
+ if(await db.Branches.AnyAsync(x=>x.AgencyId==id)||await db.Users.AnyAsync(x=>x.AgencyId==id)||await db.Vehicles.AnyAsync(x=>x.AgencyId==id)||await db.Customers.AnyAsync(x=>x.AgencyId==id)||await db.Sales.AnyAsync(x=>x.AgencyId==id)||await db.Payments.AnyAsync(x=>x.AgencyId==id)||await db.Expenses.AnyAsync(x=>x.AgencyId==id))return Results.Conflict(new{error="Agency has related records"});
+ db.Agencies.Remove(a);await db.SaveChangesAsync();return Results.NoContent();
+}).RequireAuthorization(p=>p.RequireRole("SuperAdmin"));
+api.MapPut("/branches/{id:guid}",async (Guid id,BranchDto dto,ClaimsPrincipal caller,CarDb db)=>{
+ var a=Guid.Parse(caller.FindFirst("agency_id")!.Value);var b=await db.Branches.FirstOrDefaultAsync(x=>x.Id==id&&(caller.IsInRole("SuperAdmin")||x.AgencyId==a));if(b==null)return Results.NotFound();
+ if(string.IsNullOrWhiteSpace(dto.Name)||dto.Name.Length>100)return Results.BadRequest();
+ b.Name=dto.Name.Trim();await db.SaveChangesAsync();return Results.Ok(new{b.Id,b.Name,b.AgencyId});
+}).RequireAuthorization("AdminOnly");
+api.MapDelete("/branches/{id:guid}",async (Guid id,ClaimsPrincipal caller,CarDb db)=>{
+ var a=Guid.Parse(caller.FindFirst("agency_id")!.Value);var b=await db.Branches.FirstOrDefaultAsync(x=>x.Id==id&&(caller.IsInRole("SuperAdmin")||x.AgencyId==a));if(b==null)return Results.NotFound();
+ if(await db.Vehicles.AnyAsync(x=>x.BranchId==id))return Results.Conflict(new{error="Branch has vehicles"});
+ db.Branches.Remove(b);await db.SaveChangesAsync();return Results.NoContent();
+}).RequireAuthorization("AdminOnly");
+
 // Guest submissions are separate from approved showroom inventory.
 app.MapPost("/api/public/used-submissions",async (HttpRequest request,CarDb db)=>{
  if(!request.HasFormContentType)return Results.BadRequest(new {error="multipart/form-data required"});
@@ -433,3 +473,5 @@ record ApprovalDto(bool IsApproved);
 
 
 record VehicleEditDto(string Make,string Model,int Year,decimal Price,decimal Cost);
+
+record UserManageDto(string Username,string Role,string? Password);
