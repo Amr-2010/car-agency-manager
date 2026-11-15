@@ -368,6 +368,15 @@ app.MapGet("/api/public/used-cars",async (CarDb db)=>{
  while(await rd.ReadAsync())items.Add(new{id=rd.GetGuid(0),make=rd.GetString(1),model="",year=rd.GetInt32(2),price=rd.GetDecimal(3),description=rd.GetString(4),bodyType=rd.GetString(5),location=rd.GetString(6),createdAt=rd.GetDateTime(7),photoId=rd.IsDBNull(8)?(Guid?)null:rd.GetGuid(8),condition="Used"});
  return Results.Ok(items);
 });
+app.MapGet("/api/public/used-cars/{id:guid}",async (Guid id,CarDb db)=>{
+ await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
+ await using var cmd=conn.CreateCommand();
+ cmd.CommandText="""SELECT "Id","Make","Year","Price","Description","BodyType","Location","CreatedAt","Name","Phone" FROM "UsedCarSubmissions" WHERE "Id"=@id AND "Status"='Approved'""";
+ var p=cmd.CreateParameter();p.ParameterName="id";p.Value=id;cmd.Parameters.Add(p);
+ await using var rd=await cmd.ExecuteReaderAsync();
+ if(!await rd.ReadAsync())return Results.NotFound();
+ return Results.Ok(new{id=rd.GetGuid(0),make=rd.GetString(1),year=rd.GetInt32(2),price=rd.GetDecimal(3),description=rd.GetString(4),bodyType=rd.GetString(5),location=rd.GetString(6),createdAt=rd.GetDateTime(7),sellerName=rd.GetString(8),phone=rd.GetString(9),condition="Used"});
+});
 app.MapGet("/api/public/used-cars/{id:guid}/photos/{photoId:guid}",async (Guid id,Guid photoId,CarDb db)=>{
  await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();await using var cmd=conn.CreateCommand();
  cmd.CommandText="""SELECT p."MimeType",p."ImageData" FROM "UsedCarSubmissionPhotos" p JOIN "UsedCarSubmissions" s ON s."Id"=p."SubmissionId" WHERE p."Id"=@photo AND p."SubmissionId"=@id AND s."Status"='Approved'""";
