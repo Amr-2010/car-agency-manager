@@ -65,6 +65,9 @@
  .feature:active,.car:active{transform:perspective(700px) scale(.98)}
 }
 @media(prefers-reduced-motion:reduce){.feature,.car,.photo img,.primary,.secondary,.outline{transition:none!important;transform:none!important}}
+
+/* Four car cards per row on desktop; retain two on mobile */
+@media(min-width:1000px){.grid,.catalog .grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}}
 </style></head>
 <body><script>
 (function(){
