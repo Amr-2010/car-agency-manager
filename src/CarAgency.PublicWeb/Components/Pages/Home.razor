@@ -1,12 +1,83 @@
 @page "/"
+@rendermode InteractiveServer
 @using System.Net.Http.Json
 @inject IHttpClientFactory Clients
-<h1>معارض السيارات</h1><p>تصفح السيارات المعتمدة والمنشورة فقط</p>
-@if (cars is null) { <p>جارٍ تحميل السيارات...</p> }
-else if (cars.Count == 0) { <p>لا توجد سيارات منشورة حاليًا.</p> }
-else { <section class="cards">@foreach (var car in cars) { <article><h3>@car.Make @car.Model</h3><p>موديل @car.Year</p><strong>@car.Price.ToString("N0")</strong></article> }</section> }
+
+<section class="used-cars" dir="rtl">
+    <div class="used-heading">
+        <h2>سيارات مستعملة</h2>
+        <span>عدد السيارات: @(cars?.Count ?? 0)</span>
+    </div>
+    @if (cars is null)
+    {
+        <p>جارٍ تحميل السيارات...</p>
+    }
+    else if (loadError)
+    {
+        <p role="alert">تعذر تحميل السيارات. حاول تحديث الصفحة.</p>
+    }
+    else if (cars.Count == 0)
+    {
+        <p>لا توجد سيارات منشورة حاليًا.</p>
+    }
+    else
+    {
+        <div class="used-grid">
+            @foreach (var car in cars.Take(visibleCount))
+            {
+                <article class="used-card" @key="car.Id">
+                    <div class="used-card-body">
+                        <h3>@car.Make @car.Model</h3>
+                        <p>موديل @car.Year</p>
+                        <strong>@car.Price.ToString("N0") ج.م</strong>
+                    </div>
+                </article>
+            }
+        </div>
+        @if (visibleCount < cars.Count)
+        {
+            <div class="used-more"><button type="button" @onclick="ShowMore">عرض المزيد (More)</button></div>
+        }
+    }
+</section>
+
+<style>
+.used-cars{background:#090c13;color:#fff;padding:24px 20px;border-radius:14px}
+.used-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+.used-heading h2{margin:0;font-size:1.6rem}
+.used-heading span{color:#bbc2cf}
+.used-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px}
+.used-card{background:#171b25;border:1px solid #343a47;border-radius:16px;overflow:hidden;min-width:0}
+.used-card-body{padding:22px}
+.used-card h3{margin:0 0 14px;font-size:1.2rem}
+.used-card p{color:#aeb9cc}
+.used-card strong{color:#ff1744;font-size:1.35rem}
+.used-more{text-align:center;margin:28px 0 4px}
+.used-more button{background:#e6002e;color:#fff;border:0;border-radius:12px;padding:13px 36px;cursor:pointer;font-weight:700}
+.used-more button:hover{background:#ff1744}
+@media(max-width:800px){.used-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.used-grid{grid-template-columns:1fr}}
+</style>
+
 @code {
- List<CarItem>? cars;
- protected override async Task OnInitializedAsync(){try{cars=await Clients.CreateClient("catalog").GetFromJsonAsync<List<CarItem>>("/api/public/vehicles");}catch{cars=new();}}
- public record CarItem(Guid Id,string Make,string Model,int Year,decimal Price);
+    private List<CarItem>? cars;
+    private int visibleCount = 6;
+    private bool loadError;
+    private void ShowMore() => visibleCount = Math.Min(visibleCount + 6, cars?.Count ?? 0);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            cars = await Clients.CreateClient("catalog")
+                .GetFromJsonAsync<List<CarItem>>("/api/public/vehicles") ?? new();
+        }
+        catch
+        {
+            loadError = true;
+            cars = new();
+        }
+    }
+
+    public record CarItem(Guid Id, string Make, string Model, int Year, decimal Price);
 }
