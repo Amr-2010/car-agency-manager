@@ -252,6 +252,21 @@ app.MapPost("/api/public/used-submissions",async (HttpRequest request,CarDb db)=
  await transaction.CommitAsync();return Results.Accepted(value:new {id,status="Pending",photos=photos.Count});
  }catch{await transaction.RollbackAsync();throw;}
 }).DisableAntiforgery().RequireRateLimiting("guest-submissions");
+// Public used-car listings are read only after administrator approval.
+app.MapGet("/api/public/used-cars",async (CarDb db)=>{
+ var items=new List<object>();await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
+ await using var cmd=conn.CreateCommand();
+ cmd.CommandText="""SELECT s."Id",s."Make",s."Year",s."Price",s."Description",s."BodyType",s."Location",s."CreatedAt", (SELECT p."Id" FROM "UsedCarSubmissionPhotos" p WHERE p."SubmissionId"=s."Id" ORDER BY p."Id" LIMIT 1) FROM "UsedCarSubmissions" s WHERE s."Status"='Approved' ORDER BY s."CreatedAt" DESC LIMIT 100""";
+ await using var rd=await cmd.ExecuteReaderAsync();
+ while(await rd.ReadAsync())items.Add(new{id=rd.GetGuid(0),make=rd.GetString(1),model="",year=rd.GetInt32(2),price=rd.GetDecimal(3),description=rd.GetString(4),bodyType=rd.GetString(5),location=rd.GetString(6),createdAt=rd.GetDateTime(7),photoId=rd.IsDBNull(8)?(Guid?)null:rd.GetGuid(8),condition="Used"});
+ return Results.Ok(items);
+});
+app.MapGet("/api/public/used-cars/{id:guid}/photos/{photoId:guid}",async (Guid id,Guid photoId,CarDb db)=>{
+ await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();await using var cmd=conn.CreateCommand();
+ cmd.CommandText="""SELECT p."MimeType",p."ImageData" FROM "UsedCarSubmissionPhotos" p JOIN "UsedCarSubmissions" s ON s."Id"=p."SubmissionId" WHERE p."Id"=@photo AND p."SubmissionId"=@id AND s."Status"='Approved'""";
+ foreach(var (key,value) in new[]{("photo",photoId),("id",id)}){var param=cmd.CreateParameter();param.ParameterName=key;param.Value=value;cmd.Parameters.Add(param);}
+ await using var rd=await cmd.ExecuteReaderAsync();return await rd.ReadAsync()?Results.File((byte[])rd.GetValue(1),rd.GetString(0)):Results.NotFound();
+});
 app.MapGet("/api/admin/used-submissions/{submissionId:guid}/photos/{photoId:guid}",async (Guid submissionId,Guid photoId,CarDb db)=>{
  await using var conn=db.Database.GetDbConnection();await conn.OpenAsync();
  await using var cmd=conn.CreateCommand();cmd.CommandText="""SELECT "MimeType","ImageData" FROM "UsedCarSubmissionPhotos" WHERE "Id"=@photo AND "SubmissionId"=@submission""";
