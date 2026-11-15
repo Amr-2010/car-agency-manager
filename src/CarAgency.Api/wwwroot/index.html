@@ -6,14 +6,23 @@
 
 /* Mobile: two vehicle cards per row with 1 cm vertical section spacing */
 @media(max-width:700px){
-  .carSection{margin-top:1cm;margin-bottom:1cm}
   .carSection .grid,.catalog .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
   .carSection .car,.catalog .car{min-width:0}
   .carSection .carBody,.catalog .carBody{padding:12px 9px}
   .carSection .car h3,.catalog .car h3{font-size:14px;overflow-wrap:anywhere}
   .carSection .car .price,.catalog .car .price{font-size:16px;overflow-wrap:anywhere}
-  .catalog{padding-top:1cm;padding-bottom:1cm;padding-inline:12px}
-  .catalogHeader{margin-bottom:1cm}
+  .catalog{padding-top:0;padding-bottom:0;padding-inline:12px}
+}
+
+@media(max-width:700px){
+  body{padding-top:1cm;padding-bottom:calc(1cm + 82px)}
+  header.nav{position:fixed;top:auto;bottom:0;left:0;right:0;z-index:9000;background:#10141d;border-top:1px solid #303743;border-bottom:0;display:flex;flex-wrap:nowrap;gap:8px;padding:9px 10px max(9px,env(safe-area-inset-bottom));min-height:66px;box-shadow:0 -6px 22px #0009}
+  header.nav .brand{display:none}
+  header.nav .navlinks{order:0;flex:1;min-width:0;width:auto;display:flex;flex-wrap:nowrap;overflow-x:auto;white-space:nowrap;align-items:center;padding:0;gap:8px;scrollbar-width:thin}
+  header.nav .navlinks a{font-size:11px;padding:9px 8px;flex-shrink:0}
+  header.nav .accountActions{flex-shrink:0;gap:4px}
+  header.nav .accountActions button{font-size:10px;padding:8px 6px;max-width:95px;white-space:normal}
+  html{scroll-padding-bottom:110px}
 }
 </style></head>
 <body><script>
